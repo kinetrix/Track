@@ -448,7 +448,6 @@ FaceTrack/
 |---|---|---|
 | YuNet model (OpenCV Zoo) | MIT | |
 | EdgeTAM code and checkpoint (Meta) | Apache-2.0 | |
-| This project's code | Yours | |
 
 Both models are fine for commercial use. Keep their license notices in the app's acknowledgements.
 
