@@ -1,0 +1,11 @@
+torch==2.7.0
+torchvision==0.22.0
+coremltools==9.0
+timm
+hydra-core
+iopath
+onnx
+onnx2torch
+opencv-python-headless
+pillow
+tqdm

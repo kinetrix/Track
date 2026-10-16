@@ -1,0 +1,4 @@
+# Runtime only (the engine + Mac viewer). Exporting models needs export/requirements.txt instead.
+numpy>=1.24
+opencv-python>=4.9
+onnxruntime>=1.20

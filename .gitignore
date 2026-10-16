@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+.venv/
+.tools/
+**/recordings/
+**/export/EdgeTAM/
+**/conversion/EdgeTAM/
+clips.tgz
+xcuserdata/

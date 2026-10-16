@@ -1,0 +1,13 @@
+# Only for re-exporting the models (the ONNX files already ship in ../models).
+torch==2.7.0
+torchvision==0.22.0
+timm
+hydra-core
+iopath
+onnx
+onnxscript
+onnx2torch
+onnxruntime
+opencv-python
+pillow
+tqdm

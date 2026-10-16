@@ -1,0 +1,47 @@
+# XcodeGen spec:  brew install xcodegen && cd ios && xcodegen generate && open FaceTrack.xcodeproj
+name: FaceTrack
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "18.0"   # multifunction Core ML models (MLModelConfiguration.functionName)
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_OPTIMIZATION_LEVEL: "-O"
+targets:
+  FaceTrack:
+    type: application
+    platform: iOS
+    sources:
+      - path: FaceTrack
+        excludes:
+          - "Models/**"
+      # .mlpackage folders must be single file references so Xcode compiles them to .mlmodelc
+      - path: FaceTrack/Models/YuNet.mlpackage
+        type: file
+        buildPhase: sources
+      - path: FaceTrack/Models/EdgeTAMImageEncoder.mlpackage
+        type: file
+        buildPhase: sources
+      - path: FaceTrack/Models/EdgeTAMMemoryAttention.mlpackage
+        type: file
+        buildPhase: sources
+      - path: FaceTrack/Models/EdgeTAMMaskDecoder.mlpackage
+        type: file
+        buildPhase: sources
+      - path: FaceTrack/Models/EdgeTAMMemoryEncoder.mlpackage
+        type: file
+        buildPhase: sources
+      - path: FaceTrack/Models/edgetam_config.json
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.facetrack
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "FaceTrack detects and tracks faces on-device. Frames never leave the phone."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "1"
+        COREML_CODEGEN_LANGUAGE: None   # the app loads models generically via MLModel
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""            # set your team in Xcode > Signing & Capabilities

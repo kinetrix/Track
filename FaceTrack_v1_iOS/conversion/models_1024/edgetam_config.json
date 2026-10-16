@@ -1,0 +1,12 @@
+{
+  "num_cond": 2,
+  "num_recent": 6,
+  "num_ptr": 16,
+  "attn_chunk": 512,
+  "tokens_per_mem": 512,
+  "tokens_per_ptr": 4,
+  "mem_dim": 64,
+  "image_size": 1024,
+  "stability_delta": 0.05,
+  "stability_thresh": 0.98
+}
