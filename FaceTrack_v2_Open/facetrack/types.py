@@ -40,7 +40,7 @@ class Face:
 @dataclass
 class Hand:
     id: int
-    handedness: str  # "Left" / "Right" (as seen by the person, for a mirrored selfie view)
+    handedness: str  # "Left" / "Right": the person's real hand, whether or not the view is mirrored
     score: float  # hand-presence confidence
     box: np.ndarray  # x1, y1, x2, y2
     landmarks: np.ndarray  # (21, 3): x, y in pixels, z relative depth (wrist = 0)

@@ -57,7 +57,8 @@ def resolve_camera(choice: str) -> int:
     names = list_mac_cameras()
     if names:
         print("[camera] found:", ", ".join(f"{i}: {n}" for i, n in enumerate(names)))
-    want = ["facetime", "built-in"] if choice == "builtin" else [choice.lower()]
+    # the Mac's own camera is named e.g. "FaceTime HD Camera" or "MacBook Pro Camera"
+    want = ["facetime", "built-in", "macbook", "imac"] if choice == "builtin" else [choice.lower()]
     for i, n in enumerate(names):
         if any(w in n.lower() for w in want):
             print(f"[camera] using camera {i} ({n})")

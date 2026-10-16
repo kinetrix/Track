@@ -259,8 +259,11 @@ class HandTracker:
         return iou(palm[:4], palm_from_landmarks(t.landmarks)[:4]) > self.pol.overlap_iou
 
     def handedness(self, t: _HandTrack) -> str:
+        """The person's real hand. This ONNX model's score is "right hand" for an
+        ordinary, un-mirrored camera image (as in OpenCV Zoo's own demo). A mirrored
+        (selfie) image is a reflection, which swaps left and right, so flip it back."""
         right = t.right_prob > 0.5
-        if not self.mirrored:  # the model assumes a mirrored (selfie) image
+        if self.mirrored:
             right = not right
         return "Right" if right else "Left"
 

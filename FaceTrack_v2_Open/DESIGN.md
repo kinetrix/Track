@@ -169,10 +169,14 @@ The pre- and post-processing is ported from OpenCV Zoo. On all 24 test photos it
 gives the same palms and landmarks as OpenCV Zoo's own code, to within
 0.02 px.
 
-**Left/Right:** the landmark model assumes a mirrored (selfie) image. The viewer
-mirrors the camera image like a selfie view, so the labels are correct for the
-person in front of the camera. For a non-mirrored source, the engine flips the
-labels (`mirrored_input=False`).
+**Left/Right:** this ONNX model reports the hand correctly for an ordinary,
+un-mirrored camera image. The viewer mirrors the picture like a selfie view, and
+a mirror swaps left and right, so the engine flips the model's answer back
+(`mirrored_input=True`, the default). For a non-mirrored source pass
+`mirrored_input=False`. First version had this backwards; it was spotted live on
+the Mac (your right hand showed as "Left") and is now checked by
+`tests/test_handedness.py`: the model's answer must swap when the picture is
+mirrored, and the engine must report the same real hand either way.
 
 ### 2.6 Gestures: **rules on the 21 points** (new)
 
