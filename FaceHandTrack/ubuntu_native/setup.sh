@@ -38,10 +38,14 @@ if [ "$CPU_ONLY" = 0 ] && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/
   echo "NVIDIA GPU: $(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1)"
   .venv/bin/python -m pip install torch torchvision            # the standard Linux build includes CUDA
   # The newest build needs a recent driver; with an older driver, builds for older CUDA versions still work.
-  for cu in cu128 cu126; do
+  # cu118 (last in PyTorch 2.7.1) runs on any driver from 450.80 on, e.g. the 470 series.
+  for spec in "cu128 torch torchvision" "cu126 torch torchvision" "cu118 torch==2.7.1 torchvision==0.22.1"; do
     cuda_ok && break
+    set -- $spec
+    cu=$1; shift
     echo "this PyTorch build cannot use your driver; trying the $cu build"
-    .venv/bin/python -m pip install --force-reinstall torch torchvision --index-url "https://download.pytorch.org/whl/$cu" || true
+    .venv/bin/python -m pip uninstall -y torch torchvision >/dev/null 2>&1 || true
+    .venv/bin/python -m pip install "$@" --index-url "https://download.pytorch.org/whl/$cu" || true
   done
   cuda_ok || echo "WARNING: PyTorch still cannot use the GPU (update the NVIDIA driver: sudo ubuntu-drivers install). The app will run on the CPU."
 else
