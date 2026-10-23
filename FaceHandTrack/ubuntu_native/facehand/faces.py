@@ -88,10 +88,11 @@ class EdgeTAM:
         if device.type == "cuda":
             etm.ATTN_Q_CHUNK = 0  # one attention matrix per call; chunking only helps small memories
         sam = etm.load_edgetam(ckpt, image_size=self.S)
-        self.enc = etm.EdgeTAMImageEncoder(sam).to(device).eval()
-        self.att = etm.EdgeTAMMemoryAttention(sam, self.C, self.R, self.P).to(device).eval()
-        self.dec = etm.EdgeTAMMaskDecoder(sam).to(device).eval()
-        self.men = etm.EdgeTAMMemoryEncoder(sam).to(device).eval()
+        # All four stages share one model: build them all on the CPU (their set-up runs the
+        # model on CPU tensors), then move them to the device.
+        parts = (etm.EdgeTAMImageEncoder(sam), etm.EdgeTAMMemoryAttention(sam, self.C, self.R, self.P),
+                 etm.EdgeTAMMaskDecoder(sam), etm.EdgeTAMMemoryEncoder(sam))
+        self.enc, self.att, self.dec, self.men = (m.to(device).eval() for m in parts)
         K = (self.C + self.R) * self.TM + self.P * self.TP
         self._memory = torch.zeros(1, K, self.D, device=device)
         self._valid = torch.zeros(1, self.C + self.R + self.P, device=device)
