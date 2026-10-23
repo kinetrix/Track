@@ -93,6 +93,16 @@ class EdgeTAM:
         parts = (etm.EdgeTAMImageEncoder(sam), etm.EdgeTAMMemoryAttention(sam, self.C, self.R, self.P),
                  etm.EdgeTAMMaskDecoder(sam), etm.EdgeTAMMemoryEncoder(sam))
         self.enc, self.att, self.dec, self.men = (m.to(device).eval() for m in parts)
+        # EdgeTAM's sine position encodings cache their output (a plain dict, not moved by
+        # .to()); the set-up above filled it with CPU tensors, so empty it.
+        for mod in sam.modules():
+            if isinstance(getattr(mod, "cache", None), dict):
+                mod.cache.clear()
+        if device.type == "cuda":
+            # EdgeTAM allows only Flash Attention on Ampere+, which needs 16-bit inputs; the
+            # models run in 32-bit, so let PyTorch pick any attention kernel from the start.
+            import sam2.modeling.sam.transformer as sam_transformer
+            sam_transformer.ALLOW_ALL_KERNELS = True
         K = (self.C + self.R) * self.TM + self.P * self.TP
         self._memory = torch.zeros(1, K, self.D, device=device)
         self._valid = torch.zeros(1, self.C + self.R + self.P, device=device)
