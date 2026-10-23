@@ -1,0 +1,7 @@
+build/
+logs/
+FaceHandTrack.app/
+tests/hand_canvases/
+tests/sequence/
+tests/faces/
+conversion/.venv/

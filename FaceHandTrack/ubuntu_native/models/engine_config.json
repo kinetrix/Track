@@ -1,0 +1,15 @@
+{
+ "image_size": 512,
+ "mask_size": 128,
+ "num_cond": 2,
+ "num_recent": 6,
+ "num_ptr": 16,
+ "tokens_per_mem": 512,
+ "tokens_per_ptr": 4,
+ "mem_dim": 64,
+ "stability_delta": 0.05,
+ "stability_thresh": 0.98,
+ "yunet": "face_detection_yunet_2023mar.onnx",
+ "det_width": 640,
+ "det_height": 384
+}

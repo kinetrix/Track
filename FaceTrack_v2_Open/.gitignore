@@ -1,7 +1,0 @@
-.venv/
-.tools/
-__pycache__/
-export/EdgeTAM/
-tests/engine_check*
-facetrack_*.jpg
-recordings/
