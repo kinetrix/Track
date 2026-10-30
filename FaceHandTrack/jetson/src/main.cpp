@@ -25,7 +25,7 @@ std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop = true; }
 
 struct Args {
-    std::string camera = "/dev/video4";
+    std::string camera = "videohub";
     int width = 640, height = 480, fps = 60;
     std::string engines = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/facehandtrack/engines";
     int port = 8090;
@@ -35,7 +35,8 @@ struct Args {
 
 void usage() {
     std::printf(
-        "usage: facehandtrack [--camera /dev/video4] [--width 640] [--height 480] [--fps 60]\n"
+        "usage: facehandtrack [--camera videohub|/dev/videoN|<gstreamer pipeline>]\n"
+        "                     [--width 640] [--height 480] [--fps 60]  (only for /dev/videoN)\n"
         "                     [--engines ~/facehandtrack/engines] [--port 8090] [--stream-fps 15]\n"
         "                     [--jpeg-quality 80]\n");
 }

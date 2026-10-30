@@ -4,7 +4,7 @@ Runs on the G1's development computer (Jetson Orin NX 16 GB, JetPack 5.1.1: CUDA
 TensorRT 8.5.2, OpenCV 4.2, g++ 9.4) with nothing extra installed and no internet.
 Every model runs as a TensorRT fp16 engine built on the robot.
 
-Status: step 1 of 5 — head camera (`/dev/video4`, RealSense D435i colour) → YuNet face
+Status: step 1 of 5 — head camera (Unitree videohub stream, or `/dev/videoN`) → YuNet face
 boxes → video stream in a browser. Next: EdgeTAM face tracking, hands + gestures,
 ROS 2 Foxy messages, speed work.
 
