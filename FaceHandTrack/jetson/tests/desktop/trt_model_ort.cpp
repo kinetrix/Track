@@ -14,6 +14,8 @@
 
 namespace fht {
 
+void set_cuda_graphs(bool) {}
+
 void cuda_check(cudaError_t e, const char* what) {
     if (e != cudaSuccess) {
         std::fprintf(stderr, "[cuda stub] %s failed\n", what);
@@ -190,4 +192,15 @@ cudaError_t cudaStreamCreate(cudaStream_t* s) {
 cudaError_t cudaStreamDestroy(cudaStream_t) { return cudaSuccess; }
 cudaError_t cudaStreamSynchronize(cudaStream_t) { return cudaSuccess; }
 const char* cudaGetErrorString(cudaError_t) { return "stub"; }
+cudaError_t cudaGetLastError() { return cudaSuccess; }
+cudaError_t cudaEventCreate(cudaEvent_t* e) {
+    *e = reinterpret_cast<cudaEvent_t>(0x1);
+    return cudaSuccess;
+}
+cudaError_t cudaEventRecord(cudaEvent_t, cudaStream_t) { return cudaSuccess; }
+cudaError_t cudaEventElapsedTime(float* ms, cudaEvent_t, cudaEvent_t) {
+    *ms = 0.f;
+    return cudaSuccess;
+}
+cudaError_t cudaEventDestroy(cudaEvent_t) { return cudaSuccess; }
 }

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "preprocess.hpp"
 #include "trt_model.hpp"
 
 namespace fht {
@@ -27,16 +28,16 @@ struct DetectorParams {
 class FaceDetector {
 public:
     explicit FaceDetector(const std::string& engine_path);
-    std::vector<FaceDet> detect(const cv::Mat& bgr, const DetectorParams& p);
+    // Runs on the detector's own CUDA stream and waits for its result.
+    std::vector<FaceDet> detect(const GpuFrame& frame, const DetectorParams& p);
 
-    double ms_pre = 0, ms_infer = 0, ms_post = 0;  // last call's timings
+    double ms = 0;  // last call's time
 
 private:
     TrtModel model_;
     Tensor* in_ = nullptr;
     Tensor* out_ = nullptr;
     int W_ = 0, H_ = 0;  // input width / height
-    cv::Mat canvas_;
 };
 
 float iou(const cv::Rect2f& a, const cv::Rect2f& b);

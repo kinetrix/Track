@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "preprocess.hpp"
 #include "trt_model.hpp"
 
 namespace fht {
@@ -55,14 +56,18 @@ public:
     ~EdgeTAM();
 
     std::unique_ptr<TrackMemory> new_memory() const;
-    void encode(const cv::Mat& bgr);  // once per frame, before start / track
+    void encode(const GpuFrame& frame);  // once per frame, before start / track (asynchronous)
 
     // Start a track (is_new) or re-anchor one from a detector box (x1, y1, x2, y2 in 0..S).
     TamStep start(const cv::Vec4f& box_S, TrackMemory& mem, bool is_new);
     TamStep track(TrackMemory& mem);
+    // End of the frame: waits for the remaining GPU work and adds this frame's stage times.
+    void finish();
 
     const EdgeTamConfig& cfg() const { return cfg_; }
-    double ms_enc = 0, ms_attn = 0, ms_dec = 0, ms_menc = 0;  // summed since reset_timings()
+    cudaStream_t stream() const { return stream_; }
+    // GPU time per stage, summed since reset_timings()
+    double ms_enc = 0, ms_attn = 0, ms_dec = 0, ms_menc = 0;
     void reset_timings() { ms_enc = ms_attn = ms_dec = ms_menc = 0; }
     AttnCompare compare;
 
@@ -74,6 +79,7 @@ private:
 
     EdgeTamConfig cfg_;
     cudaStream_t stream_ = nullptr;
+    GpuTimer timer_{4};
     std::unique_ptr<TrtModel> enc_, att_, att32_, dec1_, dec2_, men_;
 };
 

@@ -1,5 +1,6 @@
 // Face path for one frame: YuNet (every det_interval-th frame while faces are tracked, every
-// frame when none) -> EdgeTAM image encoder -> track manager. Same order as the Python engine.
+// frame when none) -> EdgeTAM image encoder -> track manager. Same rules as the Python engine.
+// The frame goes to the GPU once; YuNet (its own CUDA stream) runs alongside the encoder.
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -34,6 +35,7 @@ private:
     FaceDetector detector_;
     EdgeTAM tam_;
     FaceTracker tracker_;
+    GpuFrame frame_;
     DetectorParams params_;
     std::vector<FaceDet> dets_;
     long index_ = 0;

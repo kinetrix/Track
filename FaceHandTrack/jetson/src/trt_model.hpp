@@ -32,6 +32,32 @@ private:
     size_t n_ = 0;
 };
 
+// CUDA graphs: each model records its GPU work once per set of buffers and replays it
+// afterwards, which removes most kernel-launch cost on the Jetson's CPU. On by default.
+void set_cuda_graphs(bool on);
+
+// GPU time of named stages, measured with CUDA events (no extra waiting).
+class GpuTimer {
+public:
+    explicit GpuTimer(int n_stages);
+    ~GpuTimer();
+    void begin(int stage, cudaStream_t s);
+    void end(int stage, cudaStream_t s);
+    // Call after the stream's work has finished: adds the elapsed times to sums[stage].
+    void collect(double* sums);
+
+private:
+    struct Span {
+        int stage;
+        cudaEvent_t a, b;
+    };
+    cudaEvent_t take();
+    std::vector<cudaEvent_t> pool_;
+    size_t used_ = 0;
+    std::vector<Span> spans_;
+    std::vector<cudaEvent_t> open_;
+};
+
 struct Tensor {
     std::string name;
     bool is_input = false;
@@ -78,6 +104,13 @@ private:
     bool own_stream_ = false;
     std::vector<Tensor> tensors_;
     std::vector<void*> bindings_;
+    struct Graph {
+        std::vector<void*> bindings;
+        cudaGraphExec_t exec;
+    };
+    std::vector<Graph> graphs_;               // recorded runs, one per set of buffers
+    std::vector<std::vector<void*>> seen_;    // sets of buffers run once (recorded on the second run)
+    bool graphs_failed_ = false;
 };
 
 }  // namespace fht

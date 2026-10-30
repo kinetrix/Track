@@ -39,6 +39,12 @@ DeviceBuffer& DeviceBuffer::operator=(DeviceBuffer&& o) noexcept {
 }
 
 namespace {
+bool g_graphs = true;
+}  // namespace
+
+void set_cuda_graphs(bool on) { g_graphs = on; }
+
+namespace {
 
 class Logger : public nvinfer1::ILogger {
 public:
@@ -111,6 +117,7 @@ TrtModel::TrtModel(const std::string& engine_path, cudaStream_t stream) : path_(
 }
 
 TrtModel::~TrtModel() {
+    for (Graph& g : graphs_) cudaGraphExecDestroy(g.exec);
     for (Tensor& t : tensors_) {
         cudaFree(t.device);
         cudaFreeHost(t.host);
@@ -144,10 +151,42 @@ void TrtModel::download(const std::string& name) {
 }
 
 void TrtModel::enqueue() {
-    if (!context_->enqueueV2(bindings_.data(), stream_, nullptr)) {
-        std::fprintf(stderr, "[trt] %s: inference failed\n", path_.c_str());
-        std::exit(1);
+    auto plain = [&] {
+        if (!context_->enqueueV2(bindings_.data(), stream_, nullptr)) {
+            std::fprintf(stderr, "[trt] %s: inference failed\n", path_.c_str());
+            std::exit(1);
+        }
+    };
+    if (!g_graphs || graphs_failed_) return plain();
+    for (const Graph& g : graphs_)
+        if (g.bindings == bindings_) {
+            CUDA_CHECK(cudaGraphLaunch(g.exec, stream_));
+            return;
+        }
+    // First run with these buffers: run normally (TensorRT finishes its set-up). Second run: record.
+    bool seen = false;
+    for (const auto& b : seen_) seen = seen || b == bindings_;
+    if (!seen || graphs_.size() >= 8) {
+        if (!seen && seen_.size() < 16) seen_.push_back(bindings_);
+        return plain();
     }
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t exec = nullptr;
+    bool ok = cudaStreamBeginCapture(stream_, cudaStreamCaptureModeThreadLocal) == cudaSuccess;
+    if (ok) {
+        const bool queued = context_->enqueueV2(bindings_.data(), stream_, nullptr);
+        ok = cudaStreamEndCapture(stream_, &graph) == cudaSuccess && queued && graph;
+    }
+    if (ok) ok = cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0) == cudaSuccess;
+    if (graph) cudaGraphDestroy(graph);
+    if (!ok) {
+        cudaGetLastError();  // clear the failed capture
+        graphs_failed_ = true;
+        std::fprintf(stderr, "[trt] %s: CUDA graph recording failed, running without it\n", path_.c_str());
+        return plain();
+    }
+    graphs_.push_back({bindings_, exec});
+    CUDA_CHECK(cudaGraphLaunch(exec, stream_));
 }
 
 void TrtModel::sync() { CUDA_CHECK(cudaStreamSynchronize(stream_)); }

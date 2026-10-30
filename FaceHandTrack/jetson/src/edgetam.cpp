@@ -1,9 +1,6 @@
 #include "edgetam.hpp"
 
-#include <opencv2/imgproc.hpp>
-
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,8 +9,7 @@ namespace fht {
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
-double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+enum Stage { ENC = 0, ATTN = 1, DEC = 2, MENC = 3 };
 
 int best_multimask(const float* iou) {  // index of the best of masks 1..3
     int k = 1;
@@ -87,25 +83,26 @@ std::unique_ptr<TrackMemory> EdgeTAM::new_memory() const {
     return m;
 }
 
-void EdgeTAM::encode(const cv::Mat& bgr) {
-    auto t = Clock::now();
-    const int S = cfg_.S;
-    cv::Mat small, rgb, f;
-    cv::resize(bgr, small, cv::Size(S, S), 0, 0, cv::INTER_LINEAR);  // whole frame squashed to S x S
-    cv::cvtColor(small, rgb, cv::COLOR_BGR2RGB);
-    rgb.convertTo(f, CV_32F);  // 0..255; normalisation is inside the graph
-    Tensor& img = enc_->tensor("image");
-    std::vector<cv::Mat> planes;
-    for (int c = 0; c < 3; ++c) planes.emplace_back(S, S, CV_32F, img.host + static_cast<size_t>(c) * S * S);
-    cv::split(f, planes);
-    enc_->upload("image");
+void EdgeTAM::encode(const GpuFrame& frame) {
+    timer_.begin(ENC, stream_);
+    // whole frame squashed to S x S, RGB, 0..255 (normalisation is inside the graph)
+    resize_to_planar(frame, enc_->tensor("image").device, cfg_.S, cfg_.S, cfg_.S, cfg_.S, true, stream_);
     enc_->enqueue();
-    enc_->sync();
-    ms_enc += ms_since(t);
+    timer_.end(ENC, stream_);
+}
+
+void EdgeTAM::finish() {
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    double sums[4] = {0, 0, 0, 0};
+    timer_.collect(sums);
+    ms_enc += sums[ENC];
+    ms_attn += sums[ATTN];
+    ms_dec += sums[DEC];
+    ms_menc += sums[MENC];
 }
 
 const float* EdgeTAM::attend(TrtModel& att, const TrackMemory& mem) {
-    auto t = Clock::now();
+    timer_.begin(ATTN, stream_);
     const int C = cfg_.C, R = cfg_.R, P = cfg_.P;
     const size_t tok = static_cast<size_t>(cfg_.TM) * cfg_.D, ptr = static_cast<size_t>(cfg_.TP) * cfg_.D;
     Tensor& m = att.tensor("memory");
@@ -137,13 +134,11 @@ const float* EdgeTAM::attend(TrtModel& att, const TrackMemory& mem) {
     att.upload("slot_valid");
     att.bind("tgt0", enc_->tensor("tgt0").device);
     att.enqueue();
-    att.sync();
-    ms_attn += ms_since(t);
+    timer_.end(ATTN, stream_);
     return att.tensor("pix_feat").device;
 }
 
 TrtModel& EdgeTAM::decode(const float* pix_feat, const float* coords, const float* labels, int n_points) {
-    auto t = Clock::now();
     TrtModel& dec = n_points == 1 ? *dec1_ : *dec2_;
     dec.bind("pix_feat", pix_feat);
     dec.bind("hr0", enc_->tensor("hr0").device);
@@ -152,26 +147,32 @@ TrtModel& EdgeTAM::decode(const float* pix_feat, const float* coords, const floa
     std::memcpy(dec.tensor("point_labels").host, labels, n_points * sizeof(float));
     dec.upload("point_coords");
     dec.upload("point_labels");
+    timer_.begin(DEC, stream_);
     dec.enqueue();
+    timer_.end(DEC, stream_);
     dec.download("masks");
     dec.download("iou");
     dec.download("obj_score");
-    dec.sync();
-    ms_dec += ms_since(t);
+    dec.sync();  // the CPU needs the masks and scores now
     return dec;
 }
 
 void EdgeTAM::memorize(TrtModel& dec, int k, float binarize, float* dst_tokens) {
-    auto t = Clock::now();
+    // Fixed input / output buffers (copies in and out are tiny), so one recorded CUDA graph serves
+    // every face and slot.
     const size_t mm = static_cast<size_t>(cfg_.M) * cfg_.M;
+    Tensor& logits = men_->tensor("mask_logits");
+    Tensor& tokens = men_->tensor("tokens");
+    CUDA_CHECK(cudaMemcpyAsync(logits.device, dec.tensor("masks").device + k * mm, mm * sizeof(float),
+                               cudaMemcpyDeviceToDevice, stream_));
     men_->bind("feat", enc_->tensor("feat").device);
-    men_->bind("mask_logits", dec.tensor("masks").device + k * mm);
     men_->tensor("binarize").host[0] = binarize;
     men_->upload("binarize");
-    men_->bind("tokens", dst_tokens);
+    timer_.begin(MENC, stream_);
     men_->enqueue();
-    men_->sync();
-    ms_menc += ms_since(t);
+    timer_.end(MENC, stream_);
+    CUDA_CHECK(cudaMemcpyAsync(dst_tokens, tokens.device, tokens.count * sizeof(float), cudaMemcpyDeviceToDevice,
+                               stream_));
 }
 
 float EdgeTAM::stability(const float* mask) const {
