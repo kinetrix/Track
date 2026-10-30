@@ -7,8 +7,15 @@
 namespace fht {
 
 Camera::Camera(const std::string& device, int width, int height, int fps) {
-    if (!cap_.open(device, cv::CAP_V4L2)) {
-        std::fprintf(stderr, "[camera] cannot open %s\n", device.c_str());
+    // OpenCV 4.2 opens V4L2 devices most reliably by index: "/dev/video4" -> 4.
+    bool ok = false;
+    if (device.rfind("/dev/video", 0) == 0 && device.size() > 10) ok = cap_.open(std::stoi(device.substr(10)), cv::CAP_V4L2);
+    if (!ok) ok = cap_.open(device, cv::CAP_V4L2);
+    if (!ok) {
+        std::fprintf(stderr,
+                     "[camera] cannot open %s. Another program may be using it: run\n"
+                     "  sudo fuser -v /dev/video*\n",
+                     device.c_str());
         std::exit(1);
     }
     cap_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
