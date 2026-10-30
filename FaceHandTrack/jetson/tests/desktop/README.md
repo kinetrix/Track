@@ -26,7 +26,8 @@ python3 compare.py cpp.txt py.txt
 
 Last run (Oct 30, 2026), with the GPU-style input kernel (its bilinear resize differs from
 cv::resize by at most 1 grey level on ~2.5% of pixels):
-- faces: same track IDs and events on clip_group, clip_longocc, clip_crowd and the hand clip;
+- faces: same track IDs on clip_group, clip_longocc, clip_crowd and the hand clip (same events,
+  except one hand-presence score printed 0.17 vs 0.16);
   box IoU 1.000 / 1.000 / 0.959 (smallest crowd faces) / 0.999.
 - hands: the 24 labelled hand photos (3 frames each): same Left/Right, gesture and finger count
   on 24/24; moving-hand clip (open palm -> victory, 40 frames): same ID, Left/Right and gesture
