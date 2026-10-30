@@ -1,5 +1,7 @@
 #include "mjpeg_server.hpp"
 
+#include <opencv2/imgcodecs.hpp>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -27,7 +29,7 @@ bool send_all(int fd, const void* data, size_t n) {
 }
 }  // namespace
 
-MjpegServer::MjpegServer(int port) : port_(port) {
+MjpegServer::MjpegServer(int port, int jpeg_quality) : port_(port), jpeg_quality_(jpeg_quality) {
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
     ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -40,6 +42,7 @@ MjpegServer::MjpegServer(int port) : port_(port) {
         std::exit(1);
     }
     accept_thread_ = std::thread(&MjpegServer::accept_loop, this);
+    encode_thread_ = std::thread(&MjpegServer::encode_loop, this);
 }
 
 MjpegServer::~MjpegServer() {
@@ -47,16 +50,39 @@ MjpegServer::~MjpegServer() {
     ::shutdown(listen_fd_, SHUT_RDWR);
     ::close(listen_fd_);
     cv_.notify_all();
+    frame_cv_.notify_all();
     if (accept_thread_.joinable()) accept_thread_.join();
+    if (encode_thread_.joinable()) encode_thread_.join();
 }
 
-void MjpegServer::publish(std::vector<unsigned char> jpeg) {
+void MjpegServer::submit(cv::Mat bgr) {
     {
-        std::lock_guard<std::mutex> lk(m_);
-        jpeg_ = std::move(jpeg);
-        ++jpeg_id_;
+        std::lock_guard<std::mutex> lk(frame_m_);
+        pending_ = std::move(bgr);
     }
-    cv_.notify_all();
+    frame_cv_.notify_one();
+}
+
+void MjpegServer::encode_loop() {
+    const std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
+    while (running_) {
+        cv::Mat frame;
+        {
+            std::unique_lock<std::mutex> lk(frame_m_);
+            frame_cv_.wait_for(lk, std::chrono::milliseconds(500), [&] { return !pending_.empty() || !running_; });
+            if (pending_.empty()) continue;
+            frame = std::move(pending_);
+            pending_ = cv::Mat();
+        }
+        std::vector<unsigned char> jpg;
+        cv::imencode(".jpg", frame, jpg, params);
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            jpeg_ = std::move(jpg);
+            ++jpeg_id_;
+        }
+        cv_.notify_all();
+    }
 }
 
 void MjpegServer::accept_loop() {

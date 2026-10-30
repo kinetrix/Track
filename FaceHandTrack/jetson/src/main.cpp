@@ -1,7 +1,6 @@
 // FaceHandTrack on the Unitree G1 (Jetson Orin NX, TensorRT 8.5).
 // Step 1: head camera -> YuNet face boxes (TensorRT fp16) -> browser video stream.
 
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <atomic>
@@ -96,7 +95,7 @@ int main(int argc, char** argv) {
 
     FaceDetector detector(a.engines + "/yunet_640x384.fp16.engine");
     Camera cam(a.camera, a.width, a.height, a.fps);
-    MjpegServer stream(a.port);
+    MjpegServer stream(a.port, a.jpeg_quality);
     std::printf("[stream] open http://<robot address>:%d/ in a browser (e.g. http://192.168.123.164:%d/)\n", a.port,
                 a.port);
     std::fflush(stdout);
@@ -109,7 +108,6 @@ int main(int argc, char** argv) {
     int frames = 0;
     double sum_pre = 0, sum_inf = 0, sum_post = 0, sum_total = 0, fps = 0;
     size_t last_faces = 0;
-    const std::vector<int> jpeg_params = {cv::IMWRITE_JPEG_QUALITY, a.jpeg_quality};
 
     while (!g_stop) {
         id = cam.wait_newer(id, frame);
@@ -127,9 +125,7 @@ int main(int argc, char** argv) {
         if (stream.has_viewers() && ms_since(t_stream) >= 1000.0 / std::max(1, a.stream_fps)) {
             t_stream = std::chrono::steady_clock::now();
             draw(frame, faces, fps, cam.capture_fps());
-            std::vector<unsigned char> jpg;
-            cv::imencode(".jpg", frame, jpg, jpeg_params);
-            stream.publish(std::move(jpg));
+            stream.submit(std::move(frame));  // `frame` is empty now; the camera fills a fresh one
         }
 
         double dt = ms_since(t_report);
