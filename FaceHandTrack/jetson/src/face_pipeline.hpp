@@ -1,5 +1,6 @@
-// Face path for one frame: YuNet (every det_interval-th frame while faces are tracked, every
-// frame when none) -> EdgeTAM image encoder -> track manager. Same rules as the Python engine.
+// EdgeTAM face path (--tracker edgetam): per frame, YuNet (every det_interval-th frame while faces
+// are tracked, every frame when none) -> EdgeTAM image encoder -> track manager. Same rules as the
+// Python engine.
 // The frame goes to the GPU once; YuNet (its own CUDA stream) runs alongside the encoder.
 #pragma once
 
@@ -10,20 +11,23 @@
 
 #include "edgetam.hpp"
 #include "face_detector.hpp"
+#include "face_source.hpp"
 #include "face_tracker.hpp"
 
 namespace fht {
 
-class FacePipeline {
+class FacePipeline : public FaceSource {
 public:
     FacePipeline(const std::string& engines, const std::string& attn_precision, bool compare_attn,
                  const FacePolicy& policy);
 
     // now: seconds (track timeouts are in seconds, so they behave the same at any frame rate).
-    void process(const cv::Mat& bgr, double now, std::vector<std::string>& events);
+    void process(const cv::Mat& bgr, double now, std::vector<std::string>& events) override;
+    std::vector<FaceOut> faces() const override;
+    std::string timing(int frames) override;
 
     const std::vector<std::unique_ptr<FaceTrack>>& tracks() const { return tracker_.tracks(); }
-    const std::vector<FaceDet>& detections() const { return dets_; }  // this frame's (may be empty)
+    const std::vector<FaceDet>& detections() const override { return dets_; }  // this frame's (may be empty)
     EdgeTAM& tam() { return tam_; }
     double ms_detect = 0;  // summed since reset_timings()
     void reset_timings() {

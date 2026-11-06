@@ -38,7 +38,8 @@ Camera::Camera(const std::string& device, int width, int height, int fps) {
     if (!ok) {
         std::fprintf(stderr,
                      "[camera] cannot open %s.\n"
-                     "  /dev/videoN: another program may be using it (sudo fuser -v /dev/video*)\n"
+                     "  /dev/videoN: another program may be using it (sudo fuser -v /dev/video*);\n"
+                     "               Unitree's videohub holds the head camera: sudo pkill -f videohub_pc4\n"
                      "  videohub: is videohub_pc4 running, and does OpenCV have GStreamer support?\n",
                      what.c_str());
         std::exit(1);
@@ -50,7 +51,11 @@ Camera::Camera(const std::string& device, int width, int height, int fps) {
     }
     width_ = probe.cols;
     height_ = probe.rows;
-    std::printf("[camera] %s: %dx%d\n", what.c_str(), width_, height_);
+    if (device.rfind("/dev/video", 0) == 0)
+        std::printf("[camera] %s: %dx%d @ %.0f fps (asked %dx%d @ %d)\n", what.c_str(), width_, height_,
+                    cap_.get(cv::CAP_PROP_FPS), width, height, fps);
+    else
+        std::printf("[camera] %s: %dx%d\n", what.c_str(), width_, height_);
     thread_ = std::thread(&Camera::loop, this);
 }
 

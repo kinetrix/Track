@@ -14,10 +14,10 @@ Python engine's requirements.
 ORT=/path/to/onnxruntime-linux-x64-1.20.1
 INC="-isystem $TRT/include -isystem $CUDART/include -isystem $NVCC/include -isystem $ORT/include"
 g++ -std=c++17 -O2 $INC -I../../src $(pkg-config --cflags opencv4) run_clip.cpp trt_model_ort.cpp \
-    preprocess_cpu.cpp ../../src/{gpu_timer,face_pipeline,face_tracker,edgetam,face_detector,hands,gestures,hand_pipeline}.cpp \
+    preprocess_cpu.cpp ../../src/{gpu_timer,face_pipeline,face_tracker,edgetam,face_detector,face_embedder,fast_face_tracker,hands,gestures,hand_pipeline}.cpp \
     -o run_clip \
     -L$ORT/lib -lonnxruntime -Wl,-rpath,$ORT/lib $(pkg-config --libs opencv4) -lpthread
-# ONNX files: yunet_640x384 + palm/handpose (onnx/models) + the converted EdgeTAM graphs (jetson/models)
+# ONNX files: yunet_640x384, sface, palm/handpose (onnx/models) + the converted EdgeTAM graphs (jetson/models)
 python3 make_hand_clip.py ../../../../FaceTrack_v1_iOS/conversion/eval/clip_selfie clip_hand   # moving hand
 FHT_ONNX_DIR=/path/to/onnx_files ./run_clip ../../../../FaceTrack_v1_iOS/conversion/eval/clip_group > cpp.txt
 python3 run_clip_python.py ../../../../FaceTrack_v1_iOS/conversion/eval/clip_group > py.txt
@@ -32,3 +32,16 @@ cv::resize by at most 1 grey level on ~2.5% of pixels):
 - hands: the 24 labelled hand photos (3 frames each): same Left/Right, gesture and finger count
   on 24/24; moving-hand clip (open palm -> victory, 40 frames): same ID, Left/Right and gesture
   on 40/40, landmarks within 1.2 px.
+
+Fast face path (`run_clip <clip> 15 --fast --no-hands --max-faces 3`, Nov 6, 2026), scored against
+the clips' known face positions (`*_geom.json`):
+- clip_group: the three faces YuNet can see (92, 68, 52 px) followed on 22/22, 32/32 and 31/32
+  visible frames, one ID each the whole clip (EdgeTAM: 22/22, 26/32, 0/32); two faces got their
+  IDs back after hiding (similarity 0.91, 0.71).
+- clip_longocc: 40/40 visible frames, ID 1 given back after the long occlusion (similarity 0.89).
+- different people: a clip with person A, then two other people, then A again gives IDs 1, 2, 3,
+  then 1 again (similarity 0.89).
+- SFace same vs different person (OpenCV's reference, faces >= 64 px): same >= 0.71, different
+  <= 0.75 (>= 80 px: same >= 0.83, different <= 0.24), hence the 64 px floor, the 0.55
+  threshold and the 0.10 margin.
+- The EdgeTAM path's output is unchanged (identical to the Oct 30 run on clip_group).

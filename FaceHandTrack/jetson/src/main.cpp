@@ -1,6 +1,7 @@
 // FaceHandTrack on the Unitree G1 (Jetson Orin NX, TensorRT 8.5).
 // Per frame, two paths run in parallel:
-//   face path: YuNet -> EdgeTAM face tracks with stable IDs (up to 3 faces)
+//   face path: YuNet every frame -> face tracks with stable IDs, SFace re-identification
+//              (up to 3 faces; --tracker edgetam for the EdgeTAM tracker instead)
 //   hand path: palm detector (new hands) / hand landmarks (tracked hands) -> gestures
 // Results are drawn on a browser video stream.
 
@@ -19,6 +20,7 @@
 
 #include "camera.hpp"
 #include "face_pipeline.hpp"
+#include "fast_face_tracker.hpp"
 #include "hand_pipeline.hpp"
 #include "mjpeg_server.hpp"
 
@@ -30,25 +32,28 @@ std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop = true; }
 
 struct Args {
-    std::string camera = "videohub";
-    int width = 640, height = 480, fps = 60;
+    std::string camera = "/dev/video4";  // head camera, direct (stop Unitree's videohub first)
+    int width = 1280, height = 720, fps = 30;
     std::string engines = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/facehandtrack/engines";
     int port = 8090;
     int stream_fps = 15;
     int jpeg_quality = 80;
+    std::string tracker = "fast";
+    bool reid = true;
     std::string attn = "fp16";
     bool compare_attn = false;
-    int max_faces = 3, max_hands = 2;
+    int max_faces = 3, max_hands = -1;  // -1: 2 per face
     bool faces = true, hands = true, graphs = true, mirrored = false;
 };
 
 void usage() {
     std::printf(
-        "usage: facehandtrack [--camera videohub|/dev/videoN|<gstreamer pipeline>]\n"
-        "                     [--width 640] [--height 480] [--fps 60]  (only for /dev/videoN)\n"
+        "usage: facehandtrack [--camera /dev/video4|videohub|<gstreamer pipeline>]\n"
+        "                     [--width 1280] [--height 720] [--fps 30]  (only for /dev/videoN)\n"
         "                     [--engines ~/facehandtrack/engines] [--port 8090] [--stream-fps 15]\n"
-        "                     [--jpeg-quality 80] [--max-faces 3] [--max-hands 2] [--no-faces] [--no-hands]\n"
-        "                     [--attn fp16|fp32] [--compare-attn] [--no-graphs] [--mirrored]\n");
+        "                     [--jpeg-quality 80] [--max-faces 3] [--max-hands 2 x faces] [--no-faces] [--no-hands]\n"
+        "                     [--tracker fast|edgetam] [--no-reid] [--attn fp16|fp32] [--compare-attn]\n"
+        "                     [--no-graphs] [--mirrored]\n");
 }
 
 Args parse(int argc, char** argv) {
@@ -72,6 +77,8 @@ Args parse(int argc, char** argv) {
         else if (k == "--jpeg-quality") a.jpeg_quality = std::stoi(val());
         else if (k == "--max-faces") a.max_faces = std::stoi(val());
         else if (k == "--max-hands") a.max_hands = std::stoi(val());
+        else if (k == "--tracker") a.tracker = val();
+        else if (k == "--no-reid") a.reid = false;
         else if (k == "--attn") a.attn = val();
         else if (k == "--compare-attn") a.compare_attn = true;
         else if (k == "--no-faces") a.faces = false;
@@ -83,6 +90,11 @@ Args parse(int argc, char** argv) {
             std::exit(k == "--help" || k == "-h" ? 0 : 1);
         }
     }
+    if (a.tracker != "fast" && a.tracker != "edgetam") {
+        usage();
+        std::exit(1);
+    }
+    if (a.max_hands < 0) a.max_hands = 2 * a.max_faces;
     return a;
 }
 
@@ -104,18 +116,18 @@ const int kBones[21][2] = {{0, 1},   {1, 2},   {2, 3},   {3, 4},   {0, 5},   {5,
                            {7, 8},   {5, 9},   {9, 10},  {10, 11}, {11, 12}, {9, 13},  {13, 14},
                            {14, 15}, {15, 16}, {13, 17}, {17, 18}, {18, 19}, {19, 20}, {0, 17}};
 
-void draw(cv::Mat& img, const FacePipeline* faces, const HandPipeline* hands, double fps, double cam_fps) {
+void draw(cv::Mat& img, const FaceSource* faces, const HandPipeline* hands, double fps, double cam_fps) {
     int n_faces = 0;
     if (faces) {
         for (const FaceDet& d : faces->detections()) cv::rectangle(img, d.box, cv::Scalar(200, 200, 200), 1);
-        for (const auto& t : faces->tracks()) {
-            if (!t->visible) continue;
+        for (const FaceOut& t : faces->faces()) {
+            if (!t.visible) continue;
             ++n_faces;
-            const cv::Scalar c = track_color(t->id);
-            cv::rectangle(img, t->box, c, 2);
+            const cv::Scalar c = track_color(t.id);
+            cv::rectangle(img, t.box, c, 2);
             char s[48];
-            std::snprintf(s, sizeof(s), "face #%d  q%.2f", t->id, t->iou_pred);
-            label(img, s, cv::Point(static_cast<int>(t->box.x), static_cast<int>(t->box.y) - 6), c);
+            std::snprintf(s, sizeof(s), "face #%d  q%.2f", t.id, t.quality);
+            label(img, s, cv::Point(static_cast<int>(t.box.x), static_cast<int>(t.box.y) - 6), c);
         }
     }
     int n_hands = 0;
@@ -148,12 +160,16 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, on_signal);
     set_cuda_graphs(a.graphs);
 
-    std::unique_ptr<FacePipeline> faces;
+    std::unique_ptr<FaceSource> faces;
     std::unique_ptr<HandPipeline> hands;
-    if (a.faces) {
+    if (a.faces && a.tracker == "edgetam") {
         FacePolicy fp;
         fp.max_tracks = a.max_faces;
         faces = std::make_unique<FacePipeline>(a.engines, a.attn, a.compare_attn, fp);
+    } else if (a.faces) {
+        FastFacePolicy fp;
+        fp.max_tracks = a.max_faces;
+        faces = std::make_unique<FastFacePipeline>(a.engines, fp, a.reid);
     }
     if (a.hands) {
         HandPolicy hp;
@@ -215,20 +231,11 @@ int main(int argc, char** argv) {
             fps = frames * 1000.0 / dt;
             int n_faces = 0;
             if (faces)
-                for (const auto& t : faces->tracks()) n_faces += t->visible;
+                for (const FaceOut& t : faces->faces()) n_faces += t.visible;
             const int n_hands = hands ? static_cast<int>(hands->hands().size()) : 0;
             std::printf("[facehandtrack] %5.1f fps (camera %4.1f) | faces %d hands %d | total %.1f ms", fps,
                         cam.capture_fps(), n_faces, n_hands, sum_total / frames);
-            if (faces) {
-                EdgeTAM& tam = faces->tam();
-                std::printf(" | face %.1f: detect %.1f enc %.1f attn %.1f dec %.1f menc %.1f", sum_face / frames,
-                            faces->ms_detect / frames, tam.ms_enc / frames, tam.ms_attn / frames, tam.ms_dec / frames,
-                            tam.ms_menc / frames);
-                if (tam.compare.n > 0)
-                    std::printf(" | fp16 vs fp32 mask IoU mean %.3f min %.3f (%ld)",
-                                tam.compare.iou_sum / tam.compare.n, tam.compare.iou_min, tam.compare.n);
-                faces->reset_timings();
-            }
+            if (faces) std::printf(" | face %.1f: %s", sum_face / frames, faces->timing(frames).c_str());
             if (hands) {
                 std::printf(" | hand %.1f: palm %.1f landmarks %.1f", sum_hand / frames, hands->ms_palm() / frames,
                             hands->ms_landmarks() / frames);

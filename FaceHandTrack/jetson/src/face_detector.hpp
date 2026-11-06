@@ -32,6 +32,7 @@ public:
     std::vector<FaceDet> detect(const GpuFrame& frame, const DetectorParams& p);
 
     double ms = 0;  // last call's time
+    cudaStream_t stream() const { return model_.stream(); }
 
 private:
     TrtModel model_;
