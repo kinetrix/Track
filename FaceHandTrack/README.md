@@ -2,15 +2,18 @@
 
 Face detection + tracking and hand gesture tracking from a camera (Intel RealSense
 D455f colour stream, or any webcam), built only on open-source models with open
-weights. Three versions of the same project, one per subfolder:
+weights. Four versions of the same project, one per subfolder:
 
 | Folder | Runs on | Language / runtime | Accelerator | Window |
 |---|---|---|---|---|
 | [`mac_native/`](mac_native/README.md) | macOS 15+ (Apple silicon) | Swift + Core ML | Neural Engine + GPU | native Mac app |
 | [`ubuntu_native/`](ubuntu_native/README.md) | Ubuntu 22.04 / 24.04 (x86_64 PC or laptop) | Python + PyTorch | NVIDIA GPU (CUDA), else CPU | desktop window |
 | [`onnx/`](onnx/README.md) | macOS, Linux, Windows (also headless / robot) | Python + ONNX Runtime | Core ML / CUDA / DirectML / CPU, picked per model | window, or browser stream when headless |
+| [`jetson/`](jetson/README.md) | Unitree G1 robot (Jetson Orin NX, JetPack 5.1.1), offline | C++ + TensorRT 8.5 | GPU (TensorRT fp16, CUDA graphs) | browser stream |
 
-All three use the same models, the same tracking rules and the same 15 gestures:
+The first three use the same models, the same tracking rules and the same 15 gestures (`jetson/`
+uses the same hand path and gestures, and by default follows faces with YuNet + SFace face
+fingerprints instead of EdgeTAM, to fit 3 faces at 30 FPS; see its README):
 
 | Job | Model | Licence |
 |---|---|---|
