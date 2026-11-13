@@ -265,7 +265,9 @@ final class Pipeline {
         for h in hands {
             let n = CGFloat(max(h.landmarks.count, 1))
             let c = CGPoint(x: CGFloat(h.landmarks.reduce(0) { $0 + $1.x }) / n, y: CGFloat(h.landmarks.reduce(0) { $0 + $1.y }) / n)
-            helpHands.append(HelpHand(id: h.id, owner: h.owner, extended: h.extended, gesture: h.gesture, center: c))
+            let pts = h.landmarks.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
+            helpHands.append(HelpHand(id: h.id, owner: h.owner, extended: h.extended, gesture: h.gesture, center: c,
+                                      wrist: pts.first ?? c, size: PersonLinker.handSize(pts)))
         }
         var helpFaces: [HelpFace] = []
         for (f, lf) in zip(faces, linkFaces) where f.visible { helpFaces.append(HelpFace(id: f.id, box: lf.box, name: f.name)) }
@@ -279,7 +281,7 @@ final class Pipeline {
             attFaces.append(AttentionFace(id: f.id, box: lf.box, addressing: f.addressing != nil))
         }
         var attHands: [AttentionHand] = []
-        for (h, lh) in zip(hands, linkHands) { attHands.append(AttentionHand(id: h.id, owner: h.owner, extended: h.extended, points: lh.points)) }
+        for (h, lh) in zip(hands, linkHands) { attHands.append(AttentionHand(id: h.id, owner: h.owner, handedness: h.handedness, extended: h.extended, points: lh.points)) }
         attention.update(faces: attFaces, hands: attHands, frameSize: size, now: now)
         for i in faces.indices { faces[i].waving = attention.wavingUntil[faces[i].id] != nil }
 

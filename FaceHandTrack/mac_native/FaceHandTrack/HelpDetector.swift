@@ -6,7 +6,8 @@ import Foundation
 ///   Signal for Help   palm to the camera with the thumb tucked in (index..pinky up, thumb folded),
 ///                     held a moment, then the fingers fold down over the thumb (a fist), within
 ///                     about a second: the one-handed signal promoted by the Canadian Women's
-///                     Foundation, done once.
+///                     Foundation, done once. The hand must stay roughly still throughout: a
+///                     waving, blurred hand can look like a tucked thumb and then a fist.
 ///   Both hands up     both of one person's hands open and raised above their chin, held 2 s.
 ///
 /// A request raises an alert naming the person (face id and saved name) that stays until it is
@@ -15,6 +16,7 @@ struct HelpPolicy {
     var tuckedHold: TimeInterval = 0.4  // palm-with-thumb-tucked shown at least this long ...
     var foldWithin: TimeInterval = 1.0  // ... then a fist within this long after it ends
     var tuckedGap: TimeInterval = 0.3  // a break this long in the tucked palm restarts its hold
+    var stillFraction: CGFloat = 0.5  // the hand may drift at most this x its size during the signal
     var handsUpHold: TimeInterval = 2.0  // both hands open and raised this long
     var cooldown: TimeInterval = 10  // seconds before the same person can raise another alert
 }
@@ -39,6 +41,8 @@ struct HelpHand {
     let extended: [Bool]  // thumb, index, middle, ring, pinky
     let gesture: String  // stable gesture
     let center: CGPoint  // frame pixels
+    let wrist: CGPoint  // frame pixels (barely moves when the fingers fold, unlike the centre)
+    let size: CGFloat  // wrist..middle knuckle, pixels
 }
 
 struct HelpFace {
@@ -53,7 +57,7 @@ final class HelpDetector {
     private(set) var alerts: [HelpAlert] = []
     private(set) var newAlerts: [HelpAlert] = []
     private var nextID = 1
-    private var tucked: [Int: (since: TimeInterval, last: TimeInterval)] = [:]  // per hand id
+    private var tucked: [Int: (since: TimeInterval, last: TimeInterval, start: CGPoint, at: CGPoint)] = [:]  // per hand id
     private var handsUp: [Int: TimeInterval] = [:]  // per face id: since
     private var lastAlert: [String: TimeInterval] = [:]  // per person key: time
 
@@ -87,14 +91,15 @@ final class HelpDetector {
             let e = h.extended
             let isTucked = !e[0] && e[1] && e[2] && e[3] && e[4]
             let isClosed = !e[1] && !e[2] && !e[3] && !e[4]
+            let still = { (p: CGPoint) in hypot(h.wrist.x - p.x, h.wrist.y - p.y) <= pol.stillFraction * max(h.size, 1) }
             if isTucked {
-                if let t = tucked[h.id], now - t.last <= pol.tuckedGap {
-                    tucked[h.id] = (t.since, now)
+                if let t = tucked[h.id], now - t.last <= pol.tuckedGap, still(t.start) {
+                    tucked[h.id] = (t.since, now, t.start, h.wrist)
                 } else {
-                    tucked[h.id] = (now, now)
+                    tucked[h.id] = (now, now, h.wrist, h.wrist)  // (re)start: new, broken off, or moving
                 }
             } else if let t = tucked[h.id] {
-                if isClosed && t.last - t.since >= pol.tuckedHold && now - t.last <= pol.foldWithin {
+                if isClosed && t.last - t.since >= pol.tuckedHold && now - t.last <= pol.foldWithin && still(t.at) {
                     raise("Signal for Help", face: h.owner.flatMap { faceByID[$0] }, faceID: h.owner, handID: h.id, now: now)
                     tucked[h.id] = nil
                 } else if now - t.last > pol.foldWithin {

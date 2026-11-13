@@ -53,7 +53,7 @@ stays until **Acknowledge** is clicked; the same person can't raise another for 
 
 | Signal | How |
 |---|---|
-| Signal for Help | palm to the camera with the thumb tucked in (four fingers up), hold about half a second, then fold the fingers down over the thumb (a fist) within a second |
+| Signal for Help | palm to the camera with the thumb tucked in (four fingers up), hold about half a second, then fold the fingers down over the thumb (a fist) within a second, hand held still (a waving, blurred hand can look like this) |
 | Both hands up | both hands open and raised above the chin, held 2 s |
 
 No model: finger states from the hand points (`HelpDetector.swift`, `HelpPolicy`). The console
@@ -63,8 +63,9 @@ palm, so stop-then-fist within a second triggers it too.
 
 ## Waving to call the robot
 
-An open hand waved side to side at about shoulder height or above (3 swings of about 6 cm or
-more within 1.5 s) calls the robot: that person's label shows `waving`, they get the robot's
+An open hand waved side to side at about shoulder height or above (3 swings of about 5 cm or
+more within 2 s, counted per person and hand side so it survives the hand tracker losing a fast
+hand) calls the robot: that person's label shows `waving`, they get the robot's
 attention, and a cyan badge at the bottom says where the robot should turn to face them, e.g.
 `Robot → #1 Vignesh (waved) · turn left 12°, up 3°` (robot's left / right, from the camera's
 field of view: 70° assumed here, 69° on the robot's D435i). Someone who starts addressing the
