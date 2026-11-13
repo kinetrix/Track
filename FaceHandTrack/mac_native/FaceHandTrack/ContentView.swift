@@ -30,6 +30,8 @@ final class AppModel: ObservableObject {
     @Published var facesOn = true { didSet { pipeline?.facesEnabled = facesOn; if !facesOn { faces = [] } } }
     @Published var handsOn = true { didSet { pipeline?.handsEnabled = handsOn; if !handsOn { hands = [] } } }
     @Published var faceMode = FaceMode.fast { didSet { if faceMode != oldValue { pipeline?.faceMode = faceMode } } }
+    @Published var alerts: [HelpAlert] = []
+    private var lastAlertID = 0
     @Published var nameText = ""
     @Published var namesStatus = ""
 
@@ -40,6 +42,11 @@ final class AppModel: ObservableObject {
                 if msg.hasPrefix("Saved") { self?.nameText = "" }
             }
         }
+    }
+
+    func acknowledgeAlerts() {
+        pipeline?.acknowledgeAlerts()
+        alerts = []
     }
 
     func forgetNames() {
@@ -75,6 +82,11 @@ final class AppModel: ObservableObject {
                         self.hands = self.handsOn ? out.hands : []
                         self.stats = out.stats
                         self.frameSize = out.size
+                        self.alerts = out.alerts
+                        if let newest = out.alerts.last, newest.id > self.lastAlertID {  // a new help request: sound
+                            self.lastAlertID = newest.id
+                            if NSSound(named: NSSound.Name("Sosumi"))?.play() != true { NSSound.beep() }
+                        }
                     }
                     self.pipeline = p
                     self.loading = false
@@ -166,6 +178,11 @@ struct ContentView: View {
                 Overlay(faces: model.faces, hands: model.hands, frameSize: model.frameSize,
                         showMasks: model.showMasks && model.faceMode == .edgetam)
                 HUD(stats: model.stats, mode: model.faceMode).padding(8)
+                if !model.alerts.isEmpty {
+                    HelpBanner(alerts: model.alerts) { model.acknowledgeAlerts() }
+                        .frame(maxWidth: .infinity, alignment: .top)
+                        .padding(.top, 12)
+                }
                 if model.loading {
                     ProgressView("Loading models…").controlSize(.large).frame(maxWidth: .infinity, maxHeight: .infinity)
                         .foregroundStyle(.white)
@@ -211,6 +228,31 @@ struct ContentView: View {
         }
         .frame(minWidth: 800, minHeight: 520)
         .onAppear { model.start() }
+    }
+}
+
+/// Red banner for unacknowledged help requests, with the button that clears them.
+struct HelpBanner: View {
+    let alerts: [HelpAlert]
+    let acknowledge: () -> Void
+
+    static let timeFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("HELP REQUESTED").font(.title.bold())
+            ForEach(alerts.suffix(3)) { a in
+                Text("\(a.who) · \(a.reason) · \(Self.timeFormat.string(from: a.clock))").font(.title3)
+            }
+            Button("Acknowledge", action: acknowledge).controlSize(.large)
+        }
+        .padding(14)
+        .background(.red.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
+        .foregroundStyle(.white)
     }
 }
 

@@ -13,6 +13,7 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 | 21 points per hand | MediaPipe hand landmarks (Google, Apache-2.0) | GPU |
 | Gestures | hand-written rules on the 21 points | CPU (Swift) |
 | Whose hand, who is talking to the camera | rules on the face and hand boxes (no model) | CPU (Swift) |
+| Help requests (Signal for Help, both hands up) | rules on the hand points (no model) | CPU (Swift) |
 
 The default face tracker is the one from the robot version (`../jetson`): YuNet on every
 frame, faces followed from frame to frame, SFace fingerprints to give a returning face its old
@@ -42,6 +43,22 @@ frame and a `talking: Thumbs up` banner. The console prints `hand #3 (Right) -> 
 size 0.64)` when a hand changes person (the size numbers are for tuning the rule) and
 `face #1 addressing: Thumbs up` when someone starts addressing it. Rules and numbers:
 `PersonLinker.swift` (`LinkPolicy`).
+
+## Help requests
+
+Two deliberate signals raise a red **HELP REQUESTED** banner naming the person (`Vignesh (#1)`,
+`face #2`, or `someone (face not seen)`), with the time, and play the alert sound. The banner
+stays until **Acknowledge** is clicked; the same person can't raise another for 10 s.
+
+| Signal | How |
+|---|---|
+| Signal for Help | palm to the camera with the thumb tucked in (four fingers up), hold about half a second, then fold the fingers down over the thumb (a fist) within a second |
+| Both hands up | both hands open and raised above the chin, held 2 s |
+
+No model: finger states from the hand points (`HelpDetector.swift`, `HelpPolicy`). The console
+prints `HELP REQUESTED: Signal for Help from Vignesh (#1)`. On the robot this becomes a ROS 2
+message (not yet). A flat "stop" palm with the thumb pressed to the side also counts as the tucked
+palm, so stop-then-fist within a second triggers it too.
 
 **Names.** Type a name and click **Save face**: the fingerprint of the person addressing the
 camera (else the largest face) is saved, and that person shows as `#1 Vignesh` from then on,
@@ -120,6 +137,7 @@ FaceHandTrack/                  the app (Swift)
   FastFaceTracker.swift           default face tracker (as ../jetson): motion + overlap, re-ID
   FaceEmbedder.swift              SFace fingerprints (5-point alignment)
   PersonLinker.swift              whose hand, who is facing / addressing the camera
+  HelpDetector.swift              help requests: Signal for Help, both hands up
   EdgeTAM.swift, TrackManager.swift   EdgeTAM streaming tracker + face track policy (from v1)
   HandTracker.swift               palm detector, hand landmarks, hand tracking
   Gestures.swift                  gesture rules + smoothing

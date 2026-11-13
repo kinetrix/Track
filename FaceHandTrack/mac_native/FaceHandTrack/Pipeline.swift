@@ -26,6 +26,7 @@ struct HandTrackOutput: Identifiable {
     let points: [CGPoint]  // 21 landmarks, normalised
     let landmarks: [SIMD3<Float>]  // 21 landmarks, frame pixels (for the self-test)
     var owner: Int? = nil  // face id of the person this hand belongs to
+    var extended: [Bool] = []  // thumb, index, middle, ring, pinky (for the help signal)
 }
 
 enum FaceMode: String, CaseIterable, Identifiable {
@@ -54,6 +55,7 @@ struct FrameOutput {
     var hands: [HandTrackOutput]
     var stats: PipelineStats
     var size: CGSize
+    var alerts: [HelpAlert] = []  // unacknowledged help requests
 }
 
 /// Owns the models and runs one frame at a time on a private queue. Frames that arrive
@@ -74,6 +76,7 @@ final class Pipeline {
     private let fastFaces = FastFaceTracker()
     private let embedder: FaceEmbedder
     private let linker = PersonLinker()
+    private let help = HelpDetector()
     private let handTracker: HandTracker
     private var smoothers: [Int: GestureSmoother] = [:]
     private var handEventLog: [String] = []  // recent hand events, newest last (HUD)
@@ -163,6 +166,9 @@ final class Pipeline {
 
     func reset() { resetRequested.withLock { $0 = true } }
 
+    /// The caregiver has seen the help requests: clear them.
+    func acknowledgeAlerts() { queue.async { [self] in help.acknowledgeAll() } }
+
     /// Called from the camera queue. Returns immediately.
     func submit(_ pixelBuffer: CVPixelBuffer) {
         let accepted = busy.withLock { b -> Bool in
@@ -189,6 +195,7 @@ final class Pipeline {
             faceManager.reset()
             fastFaces.reset()
             linker.reset()
+            help.reset()
             handTracker.reset()
             lastEvents.removeAll()
             smoothers.removeAll()
@@ -248,7 +255,20 @@ final class Pipeline {
             faces[i].facing = st?.facing
             faces[i].addressing = st?.addressing
         }
-        for e in faceEvents + linker.newEvents {
+        // help requests (Signal for Help, both hands up)
+        var helpHands: [HelpHand] = []
+        for h in hands {
+            let n = CGFloat(max(h.landmarks.count, 1))
+            let c = CGPoint(x: CGFloat(h.landmarks.reduce(0) { $0 + $1.x }) / n, y: CGFloat(h.landmarks.reduce(0) { $0 + $1.y }) / n)
+            helpHands.append(HelpHand(id: h.id, owner: h.owner, extended: h.extended, gesture: h.gesture, center: c))
+        }
+        var helpFaces: [HelpFace] = []
+        for (f, lf) in zip(faces, linkFaces) where f.visible { helpFaces.append(HelpFace(id: f.id, box: lf.box, name: f.name)) }
+        help.update(faces: helpFaces, hands: helpHands, now: now)
+        var helpEvents: [String] = []
+        for a in help.newAlerts { helpEvents.append("HELP REQUESTED: \(a.reason) from \(a.who)") }
+
+        for e in faceEvents + linker.newEvents + helpEvents {
             print(String(format: "[%7.2fs] ", now) + e)
             lastEvents.append(e)
         }
@@ -288,7 +308,7 @@ final class Pipeline {
             for f in faces { if let g = f.addressing { talk += " | #\(f.id) addressing: " + g } }
             print(head + " | " + handText.joined(separator: ", ") + talk + (mode == .fast ? fastFaces.summary() : ""))
         }
-        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size)
+        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size, alerts: help.alerts)
     }
 
     // MARK: - fast face path (as in ../jetson)
@@ -399,7 +419,7 @@ final class Pipeline {
                 score: t.result.presence,
                 box: CGRect(x: b.0 / w, y: b.1 / h, width: (b.2 - b.0) / w, height: (b.3 - b.1) / h),
                 points: t.result.landmarks.map { CGPoint(x: Double($0.x) / w, y: Double($0.y) / h) },
-                landmarks: t.result.landmarks))
+                landmarks: t.result.landmarks, extended: Gestures.fingerStates(t.result.world)))
         }
         let live = Set(handTracker.tracks.map(\.id))
         smoothers = smoothers.filter { live.contains($0.key) }
