@@ -8,6 +8,8 @@ Produces (ML Programs, fp16, macOS 14+):
     PalmDetector.mlpackage   image (RGB, 192x192, 0..1)     -> boxes (1, 2016, 18), scores (1, 2016, 1)
     HandLandmarks.mlpackage  image (RGB, 224x224, 0..1)     -> landmarks (1, 63), presence (1, 1),
                                                                handedness (1, 1), world (1, 63)
+    SFace.mlpackage          image (RGB, 112x112, 0..255)   -> embedding (1, 128) face fingerprint
+                             (aligned face crop; OpenCV Zoo face_recognition_sface_2021dec, Apache-2.0)
 Images are CVPixelBuffer inputs, so the app hands camera-format (BGRA) buffers
 straight to Core ML. The four EdgeTAM models are the v1 ones (512 x 512), made
 by ../../../FaceTrack_v1_iOS/conversion/export_edgetam.py.
@@ -75,6 +77,12 @@ def main():
             ct.ImageType(name="image", shape=(1, 3, 224, 224), scale=1 / 255.0, color_layout=ct.colorlayout.RGB),
             ["landmarks", "presence", "handedness", "world"], dst("HandLandmarks.mlpackage"),
             "MediaPipe hand landmarks (Google, Apache-2.0, via OpenCV Zoo 2023feb)")
+
+    sface = load_onnx_as_torch(src("face_recognition_sface_2021dec.onnx"))
+    convert(sface, torch.rand(1, 3, 112, 112) * 255,
+            ct.ImageType(name="image", shape=(1, 3, 112, 112), scale=1.0, color_layout=ct.colorlayout.RGB),
+            ["embedding"], dst("SFace.mlpackage"),
+            "SFace face fingerprint (OpenCV Zoo face_recognition_sface_2021dec, Apache-2.0), aligned 112x112 crop")
 
 
 if __name__ == "__main__":

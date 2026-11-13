@@ -29,6 +29,22 @@ final class AppModel: ObservableObject {
     @Published var showMasks = true { didSet { pipeline?.renderMasks = showMasks } }
     @Published var facesOn = true { didSet { pipeline?.facesEnabled = facesOn; if !facesOn { faces = [] } } }
     @Published var handsOn = true { didSet { pipeline?.handsEnabled = handsOn; if !handsOn { hands = [] } } }
+    @Published var faceMode = FaceMode.fast { didSet { if faceMode != oldValue { pipeline?.faceMode = faceMode } } }
+    @Published var nameText = ""
+    @Published var namesStatus = ""
+
+    func saveFace() {
+        pipeline?.saveFace(name: nameText) { [weak self] msg in
+            Task { @MainActor in
+                self?.namesStatus = msg
+                if msg.hasPrefix("Saved") { self?.nameText = "" }
+            }
+        }
+    }
+
+    func forgetNames() {
+        pipeline?.forgetNames { [weak self] msg in Task { @MainActor in self?.namesStatus = msg } }
+    }
 
     let camera = CameraController()
     let frameSink = FrameSink()
@@ -50,6 +66,7 @@ final class AppModel: ObservableObject {
             do {
                 let p = try Pipeline()
                 p.mirrored = mirror
+                p.faceMode = .fast
                 Self.wire(camera: cam, pipeline: p)
                 Task { @MainActor in
                     p.onResult = { [weak self] out in  // delivered on the main queue
@@ -146,8 +163,9 @@ struct ContentView: View {
                 } else {
                     CameraPreview(camera: model.camera, mirrored: model.mirrored)
                 }
-                Overlay(faces: model.faces, hands: model.hands, frameSize: model.frameSize, showMasks: model.showMasks)
-                HUD(stats: model.stats).padding(8)
+                Overlay(faces: model.faces, hands: model.hands, frameSize: model.frameSize,
+                        showMasks: model.showMasks && model.faceMode == .edgetam)
+                HUD(stats: model.stats, mode: model.faceMode).padding(8)
                 if model.loading {
                     ProgressView("Loading models…").controlSize(.large).frame(maxWidth: .infinity, maxHeight: .infinity)
                         .foregroundStyle(.white)
@@ -165,14 +183,30 @@ struct ContentView: View {
                     ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
                 }
                 .frame(maxWidth: 360)
+                Picker("Face tracker", selection: $model.faceMode) {
+                    ForEach(FaceMode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .frame(maxWidth: 260)
                 Toggle("Mirror", isOn: $model.mirrored)
-                Toggle("Masks", isOn: $model.showMasks)
+                if model.faceMode == .edgetam { Toggle("Masks", isOn: $model.showMasks) }
                 Toggle("Faces", isOn: $model.facesOn)
                 Toggle("Hands", isOn: $model.handsOn)
                 Button { model.reset() } label: { Label("Reset", systemImage: "arrow.counterclockwise") }
                 Spacer()
             }
             .toggleStyle(.checkbox)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            HStack(spacing: 10) {
+                TextField("Name", text: $model.nameText)
+                    .frame(maxWidth: 180)
+                    .onSubmit { model.saveFace() }
+                Button("Save face") { model.saveFace() }
+                    .help("Saves the fingerprint of the person addressing the camera, else the largest face")
+                Button("Forget names") { model.forgetNames() }
+                Text(model.namesStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+            }
             .padding(10)
         }
         .frame(minWidth: 800, minHeight: 520)
@@ -182,11 +216,20 @@ struct ContentView: View {
 
 struct HUD: View {
     let stats: PipelineStats
+    let mode: FaceMode
+
+    var line: String {
+        let counts = String(format: "%.1f FPS · %ld face%@ · %ld hand%@", stats.fps, stats.faces, stats.faces == 1 ? "" : "s",
+                            stats.hands, stats.hands == 1 ? "" : "s")
+        let faces = mode == .fast
+            ? String(format: "detect %.1f · fingerprints %.1f", stats.detectMs, stats.embedMs)
+            : String(format: "detect %.1f · encode %.1f · per face %.1f", stats.detectMs, stats.encodeMs, stats.perFaceMs)
+        let rest = String(format: " · palm %.1f · landmarks %.1f · total %.1f ms", stats.palmMs, stats.landmarksMs, stats.totalMs)
+        return counts + "\n" + faces + rest + (stats.events.isEmpty ? "" : "\n" + stats.events.joined(separator: "\n"))
+    }
+
     var body: some View {
-        Text(String(format: "%.1f FPS · %ld face%@ · %ld hand%@\ndetect %.1f · encode %.1f · per face %.1f · palm %.1f · landmarks %.1f · total %.1f ms",
-                    stats.fps, stats.faces, stats.faces == 1 ? "" : "s", stats.hands, stats.hands == 1 ? "" : "s",
-                    stats.detectMs, stats.encodeMs, stats.perFaceMs, stats.palmMs, stats.landmarksMs, stats.totalMs)
-             + (stats.events.isEmpty ? "" : "\n" + stats.events.joined(separator: "\n")))
+        Text(line)
             .font(.caption.monospacedDigit())
             .padding(8)
             .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
@@ -216,24 +259,46 @@ struct Overlay: View {
             let ox = (geo.size.width - w) / 2, oy = (geo.size.height - h) / 2
             let map = { (p: CGPoint) in CGPoint(x: ox + p.x * w, y: oy + p.y * h) }
             Canvas { ctx, _ in
+                var faceRects: [Int: CGRect] = [:]
                 for f in faces {
                     let color = Self.color(f.id)
                     if showMasks, let m = f.mask {
                         ctx.draw(Image(decorative: m, scale: 1), in: CGRect(x: ox, y: oy, width: w, height: h))
                     }
                     let r = CGRect(x: ox + f.box.minX * w, y: oy + f.box.minY * h, width: f.box.width * w, height: f.box.height * h)
+                    faceRects[f.id] = r
+                    if f.addressing != nil {  // the person talking to the camera
+                        ctx.stroke(Path(roundedRect: r.insetBy(dx: -6, dy: -6), cornerRadius: 10), with: .color(.yellow), lineWidth: 5)
+                    }
                     if f.visible {
                         ctx.stroke(Path(roundedRect: r, cornerRadius: 6), with: .color(color), lineWidth: 3)
                     } else {
                         ctx.stroke(Path(roundedRect: r, cornerRadius: 6), with: .color(color.opacity(0.5)),
                                    style: StrokeStyle(lineWidth: 2, dash: [6, 6]))
                     }
-                    ctx.draw(Text("face #\(f.id)\(f.visible ? "" : " (hidden)")").font(.headline).foregroundColor(color),
+                    var label = f.name.map { "#\(f.id) \($0)" } ?? "face #\(f.id)"
+                    if !f.visible { label += " (hidden)" } else if f.facing == false { label += " · looking away" }
+                    ctx.draw(Text(label).font(.headline).foregroundColor(color),
                              at: CGPoint(x: r.minX, y: r.minY - 12), anchor: .leading)
+                    if let g = f.addressing {
+                        let banner = ctx.resolve(Text("talking: \(g)").font(.title2.bold()).foregroundColor(.black))
+                        let size = banner.measure(in: CGSize(width: 1000, height: 100))
+                        let origin = CGPoint(x: r.minX, y: r.maxY + 10)
+                        ctx.fill(Path(roundedRect: CGRect(origin: origin, size: size).insetBy(dx: -6, dy: -3), cornerRadius: 5),
+                                 with: .color(.yellow))
+                        ctx.draw(banner, at: origin, anchor: .topLeading)
+                    }
                 }
                 for hand in hands {
-                    let color = Self.color(hand.id + 2)
+                    // a hand takes its person's colour; grey when it belongs to no one
+                    let color = hand.owner.map { Self.color($0) } ?? .gray
                     let pts = hand.points.map(map)
+                    if let o = hand.owner, let fr = faceRects[o], let wrist = pts.first {  // hand -> its face
+                        var link = Path()
+                        link.move(to: wrist)
+                        link.addLine(to: CGPoint(x: fr.midX, y: fr.maxY))
+                        ctx.stroke(link, with: .color(color.opacity(0.7)), style: StrokeStyle(lineWidth: 2, dash: [4, 6]))
+                    }
                     var bones = Path()
                     for (a, b) in Self.bones {
                         bones.move(to: pts[a])
@@ -244,7 +309,8 @@ struct Overlay: View {
                         ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)), with: .color(.white))
                     }
                     let top = map(CGPoint(x: hand.box.minX, y: hand.box.minY))
-                    let label = "\(hand.handedness) #\(hand.id): \(hand.gesture.isEmpty ? "–" : hand.gesture) (\(hand.fingers))"
+                    let who = hand.owner.map { "#\($0)" } ?? "?"
+                    let label = "\(who) · \(hand.handedness): \(hand.gesture.isEmpty ? "–" : hand.gesture) (\(hand.fingers))"
                     let text = ctx.resolve(Text(label).font(.title3.bold()).foregroundColor(color))
                     let size = text.measure(in: CGSize(width: 1000, height: 100))
                     let origin = CGPoint(x: max(0, top.x), y: max(0, top.y - size.height - 6))

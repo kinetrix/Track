@@ -8,7 +8,9 @@ import ImageIO
 /// Command-line checks, run without a window or camera:
 ///
 ///     FaceHandTrack.app/Contents/MacOS/FaceHandTrack --selftest-hands <image folder> <out.json>
-///     FaceHandTrack.app/Contents/MacOS/FaceHandTrack --selftest-sequence <frame folder> <out.json> [--mirrored]
+///     FaceHandTrack.app/Contents/MacOS/FaceHandTrack --selftest-sequence <frame folder> <out.json> [--mirrored] [--fast]
+///       (EdgeTAM face tracker, as the Python engine, unless --fast; faces carry name / facing /
+///       addressing and hands their owner face)
 ///     FaceHandTrack.app/Contents/MacOS/FaceHandTrack --benchmark <out.json>
 ///     FaceHandTrack.app/Contents/MacOS/FaceHandTrack --list-cameras
 ///
@@ -28,7 +30,7 @@ enum SelfTest {
                 return 0
             }
             if let dir = arg("--selftest-sequence", 1), let out = arg("--selftest-sequence", 2) {
-                try sequence(dir: dir, out: out, mirrored: args.contains("--mirrored"))
+                try sequence(dir: dir, out: out, mirrored: args.contains("--mirrored"), fast: args.contains("--fast"))
                 return 0
             }
             if let out = arg("--benchmark", 1) {
@@ -132,9 +134,10 @@ enum SelfTest {
     }
 
     /// The whole pipeline on a frame sequence (time = index / 30 s).
-    static func sequence(dir: String, out: String, mirrored: Bool) throws {
+    static func sequence(dir: String, out: String, mirrored: Bool, fast: Bool) throws {
         let p = try Pipeline()
         p.mirrored = mirrored
+        p.faceMode = fast ? .fast : .edgetam
         p.renderMasks = false
         var rows: [[String: Any]] = []
         for (i, url) in images(in: dir).enumerated() {
@@ -145,11 +148,12 @@ enum SelfTest {
                 "index": i,
                 "faces": o.faces.map { f -> [String: Any] in
                     ["id": f.id, "visible": f.visible, "quality": Double(f.quality),
-                     "box": [f.box.minX * W, f.box.minY * H, f.box.maxX * W, f.box.maxY * H]]
+                     "box": [f.box.minX * W, f.box.minY * H, f.box.maxX * W, f.box.maxY * H],
+                     "name": f.name ?? "", "facing": f.facing.map { $0 ? 1 : 0 } ?? -1, "addressing": f.addressing ?? ""]
                 },
                 "hands": o.hands.map { h -> [String: Any] in
                     ["id": h.id, "handedness": h.handedness, "gesture": h.gesture, "raw": h.rawGesture,
-                     "landmarks": flat(h.landmarks)]
+                     "landmarks": flat(h.landmarks), "owner": h.owner ?? -1]
                 },
                 "total_ms": o.stats.frameMs,
             ])
@@ -159,7 +163,7 @@ enum SelfTest {
 
     /// Milliseconds per prediction for every model on every compute-unit choice.
     static func benchmark(out: String) throws {
-        let models: [(String, String?)] = [("YuNet", nil), ("EdgeTAMImageEncoder", nil), ("EdgeTAMMemoryAttention", nil),
+        let models: [(String, String?)] = [("YuNet", nil), ("SFace", nil), ("EdgeTAMImageEncoder", nil), ("EdgeTAMMemoryAttention", nil),
                                            ("EdgeTAMMaskDecoder", "track"), ("EdgeTAMMemoryEncoder", nil),
                                            ("PalmDetector", nil), ("HandLandmarks", nil)]
         let units: [(String, MLComputeUnits)] = [("cpu", .cpuOnly), ("gpu", .cpuAndGPU), ("ane", .cpuAndNeuralEngine), ("all", .all)]
