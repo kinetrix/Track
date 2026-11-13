@@ -19,7 +19,8 @@ struct FastFacePolicy {
     var minEmbedPx: CGFloat = 64  // smallest face side (frame pixels) worth a fingerprint
     var refreshSeconds: TimeInterval = 1.0  // re-fingerprint each visible track this often (one track per frame)
     var embedEMA: Float = 0.8  // weight of the old fingerprint when refreshing
-    var lateReidSeconds: TimeInterval = 2.0  // a new track whose first fingerprint comes this soon can still take a lost ID
+    var lateReidSeconds: TimeInterval = 3.0  // a new track keeps checking lost faces this long after it starts ...
+    var lateReidInterval: TimeInterval = 0.25  // ... with a fresh fingerprint this often (the first view is often blurred or turned)
     var maxTracks = 3
 }
 
@@ -36,6 +37,11 @@ final class FastTrack {
     var visible = true
     var emb: [Float]?
     var name: String?  // saved name this fingerprint matches
+    var revived = false  // got a lost face's ID back (no more late checks)
+    var lateBest: (sim: Float, id: Int)?  // closest lost face seen by the late checks (for the log)
+    var lateLogged = false
+    var selfSim: Float = 0  // latest fresh fingerprint vs this track's own (for tuning)
+    var nameSim: (name: String, sim: Float)?  // closest saved name (for tuning)
 
     init(id: Int, det: FaceDetection, now: TimeInterval) {
         self.id = id
@@ -113,6 +119,16 @@ final class FastFaceTracker {
 
     private func embeddable(_ d: FaceDetection) -> Bool {
         d.score >= policy.startScore && min(d.box.width, d.box.height) >= policy.minEmbedPx && d.landmarks.count == 5
+    }
+
+    /// Closest saved name and its similarity.
+    private func closestName(_ e: [Float]) -> (name: String, sim: Float)? {
+        var best: (name: String, sim: Float)?
+        for k in known {
+            let s = similarity(e, k.embedding)
+            if best == nil || s > best!.sim { best = (k.name, s) }
+        }
+        return best
     }
 
     /// Best saved name for a fingerprint, if it is clearly that person.
@@ -231,6 +247,7 @@ final class FastFaceTracker {
                 let l = lost.remove(at: bestLost)
                 t = FastTrack(id: l.id, det: d, now: now)
                 t.name = l.name
+                t.revived = true
                 log(String(format: "face back #%d after %.1fs (similarity %.2f)", t.id, now - l.lostAt, best))
             } else {
                 t = FastTrack(id: nextID, det: d, now: now)
@@ -258,25 +275,43 @@ final class FastFaceTracker {
             detOf.remove(at: ti)
         }
 
+        // Say once why a new face kept its new ID after its checking window.
+        for t in tracks where !t.revived && !t.lateLogged && now - t.born > p.lateReidSeconds {
+            t.lateLogged = true
+            if let b = t.lateBest {
+                log(String(format: "face #%d stays new (closest lost face in its first %.0fs: #%d, similarity %.2f)",
+                           t.id, p.lateReidSeconds, b.id, b.sim))
+            }
+        }
+
         // 4. Refresh one visible track's fingerprint per frame (round robin), only from a clear,
-        //    unobstructed view so an overlapping face doesn't blur it.
+        //    unobstructed view so an overlapping face doesn't blur it. A track that just started
+        //    is refreshed more often and each fresh fingerprint is checked against lost faces.
         guard !tracks.isEmpty else { return }
         for k in 0..<tracks.count {
             let ti = (refreshNext + k) % tracks.count
             let t = tracks[ti]
-            guard t.visible, detOf[ti] >= 0, now - t.lastEmbed >= p.refreshSeconds else { continue }
+            let young = !t.revived && now - t.born <= p.lateReidSeconds
+            guard t.visible, detOf[ti] >= 0, now - t.lastEmbed >= (young ? p.lateReidInterval : p.refreshSeconds) else { continue }
             let d = dets[detOf[ti]]
             guard embeddable(d) else { continue }
             let overlapped = dets.indices.contains { $0 != detOf[ti] && d.box.intersects(dets[$0].box) }
             if overlapped { continue }
             guard let e = embed(d) else { break }
-            // first fingerprint of a track that just started: it may be a lost face coming back
-            if t.emb == nil && now - t.born <= p.lateReidSeconds, let li = lostMatch(e).index {
-                let l = lost.remove(at: li)
-                log(String(format: "face #%d is #%d again (similarity %.2f)", t.id, l.id, similarity(e, l.emb)))
-                t.id = l.id
-                if t.name == nil { t.name = l.name }
+            // a track that just started may be a lost face coming back
+            if young {
+                let m = lostMatch(e)
+                if let id = m.bestID, t.lateBest == nil || m.best > t.lateBest!.sim { t.lateBest = (m.best, id) }
+                if let li = m.index {
+                    let l = lost.remove(at: li)
+                    log(String(format: "face #%d is #%d again (similarity %.2f)", t.id, l.id, m.best))
+                    t.id = l.id
+                    t.revived = true
+                    if t.name == nil { t.name = l.name }
+                }
             }
+            if let old = t.emb { t.selfSim = similarity(e, old) }
+            t.nameSim = closestName(e)
             if let old = t.emb {
                 t.emb = normalized(zip(old, e).map { p.embedEMA * $0 + (1 - p.embedEMA) * $1 })
             } else {
@@ -287,6 +322,17 @@ final class FastFaceTracker {
             refreshNext = ti + 1
             break
         }
+    }
+
+    /// Per visible face: name, closest saved name and how well fresh fingerprints match the track's own
+    /// (status line, for tuning the thresholds).
+    func summary() -> String {
+        tracks.filter(\.visible).map { t -> String in
+            var s = " | #\(t.id)" + (t.name.map { " " + $0 } ?? "")
+            if let n = t.nameSim { s += String(format: " (closest name %@ %.2f", n.name, n.sim) + String(format: ", self %.2f)", t.selfSim) }
+            else if t.emb != nil { s += String(format: " (self %.2f)", t.selfSim) }
+            return s
+        }.joined()
     }
 
     /// Fingerprint of a track (for saving a name).

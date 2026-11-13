@@ -16,8 +16,9 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 
 The default face tracker is the one from the robot version (`../jetson`): YuNet on every
 frame, faces followed from frame to frame, SFace fingerprints to give a returning face its old
-ID back (also when the first clear view of a returning face comes up to 2 s after it reappears;
-the console says why a face got a new ID). The EdgeTAM tracker from the iOS app (`../../FaceTrack_v1_iOS`) is still there for
+ID back (a returning face keeps being checked for 3 s, a fresh fingerprint every 0.25 s, since
+its first view is often blurred or turned; the console says why a face kept a new ID, and the
+status line shows each face's closest saved name and how well its fingerprints agree). The EdgeTAM tracker from the iOS app (`../../FaceTrack_v1_iOS`) is still there for
 pixel masks. The hand tracker and gesture rules are line-by-line Swift ports of the Python engine.
 
 ## Who is talking to the camera

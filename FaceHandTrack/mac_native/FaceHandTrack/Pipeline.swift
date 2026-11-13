@@ -286,7 +286,7 @@ final class Pipeline {
             }
             var talk = ""
             for f in faces { if let g = f.addressing { talk += " | #\(f.id) addressing: " + g } }
-            print(head + " | " + handText.joined(separator: ", ") + talk)
+            print(head + " | " + handText.joined(separator: ", ") + talk + (mode == .fast ? fastFaces.summary() : ""))
         }
         return FrameOutput(faces: faces, hands: hands, stats: stats, size: size)
     }
