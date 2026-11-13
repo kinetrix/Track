@@ -29,7 +29,7 @@ holds a gesture is marked as addressing it. No extra model, a few comparisons pe
 
 | Rule | What it does |
 |---|---|
-| reach | a hand belongs only to a face within 4.5 face widths |
+| reach | a hand belongs only to a face within 5 face widths |
 | size | a person's hand (wrist to middle knuckle) is about 0.6 x their face width, so a hand much smaller or larger than a face belongs to someone nearer or farther away (a depth cue from one camera) |
 | side | a right hand is usually on the person's right of their face (follows the Mirror setting) |
 | one each | each person has at most one left and one right hand |

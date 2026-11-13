@@ -12,7 +12,7 @@ import Foundation
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
 struct LinkPolicy {
-    var maxReach: CGFloat = 4.5  // hand centre to face centre, in face widths (real links seen up to ~3.7)
+    var maxReach: CGFloat = 5.0  // hand centre to face centre, in face widths (raised hands reach ~4.5; doubtful links were 5.3+)
     var handFaceRatio: CGFloat = 0.6  // typical hand size (wrist..middle knuckle) / face box width
     var minRatio: CGFloat = 0.25, maxRatio: CGFloat = 2.5  // outside this, never the same person
     var sizeWeight: CGFloat = 2.0  // cost per unit of |ln(ratio / handFaceRatio)|
