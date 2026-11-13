@@ -14,6 +14,7 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 | Gestures | hand-written rules on the 21 points | CPU (Swift) |
 | Whose hand, who is talking to the camera | rules on the face and hand boxes (no model) | CPU (Swift) |
 | Help requests (Signal for Help, both hands up) | rules on the hand points (no model) | CPU (Swift) |
+| Waving to call the robot, where to turn | rules on hand motion and face position (no model) | CPU (Swift) |
 
 The default face tracker is the one from the robot version (`../jetson`): YuNet on every
 frame, faces followed from frame to frame, SFace fingerprints to give a returning face its old
@@ -59,6 +60,18 @@ No model: finger states from the hand points (`HelpDetector.swift`, `HelpPolicy`
 prints `HELP REQUESTED: Signal for Help from Vignesh (#1)`. On the robot this becomes a ROS 2
 message (not yet). A flat "stop" palm with the thumb pressed to the side also counts as the tucked
 palm, so stop-then-fist within a second triggers it too.
+
+## Waving to call the robot
+
+An open hand waved side to side at about shoulder height or above (3 swings of about 6 cm or
+more within 1.5 s) calls the robot: that person's label shows `waving`, they get the robot's
+attention, and a cyan badge at the bottom says where the robot should turn to face them, e.g.
+`Robot → #1 Vignesh (waved) · turn left 12°, up 3°` (robot's left / right, from the camera's
+field of view: 70° assumed here, 69° on the robot's D435i). Someone who starts addressing the
+camera also gets the attention when no one has it. The attention is released when that person is
+out of sight for 2 s or shows nothing for 30 s, or someone else waves. Console: `face #1 waved:
+calling the robot`, `robot attention -> face #1 (waved)`, and the turn on the status line. On the
+robot the turn becomes a head / body command (not yet). `AttentionTracker.swift`, `AttentionPolicy`.
 
 **Names.** Type a name and click **Save face**: the fingerprint of the person addressing the
 camera (else the largest face) is saved, and that person shows as `#1 Vignesh` from then on,
@@ -138,6 +151,7 @@ FaceHandTrack/                  the app (Swift)
   FaceEmbedder.swift              SFace fingerprints (5-point alignment)
   PersonLinker.swift              whose hand, who is facing / addressing the camera
   HelpDetector.swift              help requests: Signal for Help, both hands up
+  AttentionTracker.swift          waving to call the robot; who it attends to and where to turn
   EdgeTAM.swift, TrackManager.swift   EdgeTAM streaming tracker + face track policy (from v1)
   HandTracker.swift               palm detector, hand landmarks, hand tracking
   Gestures.swift                  gesture rules + smoothing

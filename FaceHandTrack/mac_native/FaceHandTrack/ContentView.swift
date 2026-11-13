@@ -31,6 +31,7 @@ final class AppModel: ObservableObject {
     @Published var handsOn = true { didSet { pipeline?.handsEnabled = handsOn; if !handsOn { hands = [] } } }
     @Published var faceMode = FaceMode.fast { didSet { if faceMode != oldValue { pipeline?.faceMode = faceMode } } }
     @Published var alerts: [HelpAlert] = []
+    @Published var attention: AttentionTarget?
     private var lastAlertID = 0
     @Published var nameText = ""
     @Published var namesStatus = ""
@@ -83,6 +84,7 @@ final class AppModel: ObservableObject {
                         self.stats = out.stats
                         self.frameSize = out.size
                         self.alerts = out.alerts
+                        self.attention = out.attention
                         if let newest = out.alerts.last, newest.id > self.lastAlertID {  // a new help request: sound
                             self.lastAlertID = newest.id
                             if NSSound(named: NSSound.Name("Sosumi"))?.play() != true { NSSound.beep() }
@@ -178,6 +180,11 @@ struct ContentView: View {
                 Overlay(faces: model.faces, hands: model.hands, frameSize: model.frameSize,
                         showMasks: model.showMasks && model.faceMode == .edgetam)
                 HUD(stats: model.stats, mode: model.faceMode).padding(8)
+                if let a = model.attention {
+                    AttentionBadge(target: a, name: model.faces.first { $0.id == a.faceID }?.name)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, 14)
+                }
                 if !model.alerts.isEmpty {
                     HelpBanner(alerts: model.alerts) { model.acknowledgeAlerts() }
                         .frame(maxWidth: .infinity, alignment: .top)
@@ -228,6 +235,22 @@ struct ContentView: View {
         }
         .frame(minWidth: 800, minHeight: 520)
         .onAppear { model.start() }
+    }
+}
+
+/// Who the robot is attending to and how it should turn to face them.
+struct AttentionBadge: View {
+    let target: AttentionTarget
+    let name: String?
+
+    var body: some View {
+        let who = name.map { "#\(target.faceID) \($0)" } ?? "face #\(target.faceID)"
+        Text("Robot → \(who) (\(target.reason)) · \(target.turnText)")
+            .font(.title3.bold())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.cyan.opacity(0.85), in: Capsule())
+            .foregroundStyle(.black)
     }
 }
 
@@ -320,6 +343,7 @@ struct Overlay: View {
                     }
                     var label = f.name.map { "#\(f.id) \($0)" } ?? "face #\(f.id)"
                     if !f.visible { label += " (hidden)" } else if f.facing == false { label += " · looking away" }
+                    if f.waving { label += " · waving" }
                     ctx.draw(Text(label).font(.headline).foregroundColor(color),
                              at: CGPoint(x: r.minX, y: r.minY - 12), anchor: .leading)
                     if let g = f.addressing {

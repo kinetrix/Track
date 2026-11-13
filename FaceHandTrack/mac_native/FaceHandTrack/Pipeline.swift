@@ -13,6 +13,7 @@ struct FaceTrackOutput: Identifiable {
     var name: String? = nil  // saved name this face matches (fast tracker)
     var facing: Bool? = nil  // turned to the camera (nil: not known yet)
     var addressing: String? = nil  // gesture this person is showing the camera
+    var waving = false  // just waved to call the robot
 }
 
 struct HandTrackOutput: Identifiable {
@@ -56,6 +57,7 @@ struct FrameOutput {
     var stats: PipelineStats
     var size: CGSize
     var alerts: [HelpAlert] = []  // unacknowledged help requests
+    var attention: AttentionTarget? = nil  // who the robot should turn to, and how far
 }
 
 /// Owns the models and runs one frame at a time on a private queue. Frames that arrive
@@ -77,6 +79,7 @@ final class Pipeline {
     private let embedder: FaceEmbedder
     private let linker = PersonLinker()
     private let help = HelpDetector()
+    private let attention = AttentionTracker()
     private let handTracker: HandTracker
     private var smoothers: [Int: GestureSmoother] = [:]
     private var handEventLog: [String] = []  // recent hand events, newest last (HUD)
@@ -112,6 +115,7 @@ final class Pipeline {
         set {
             handTracker.mirrored = newValue
             linker.mirrored = newValue
+            attention.mirrored = newValue
         }
     }
 
@@ -196,6 +200,7 @@ final class Pipeline {
             fastFaces.reset()
             linker.reset()
             help.reset()
+            attention.reset()
             handTracker.reset()
             lastEvents.removeAll()
             smoothers.removeAll()
@@ -268,7 +273,17 @@ final class Pipeline {
         var helpEvents: [String] = []
         for a in help.newAlerts { helpEvents.append("HELP REQUESTED: \(a.reason) from \(a.who)") }
 
-        for e in faceEvents + linker.newEvents + helpEvents {
+        // waving to call the robot, and where it should turn
+        var attFaces: [AttentionFace] = []
+        for (f, lf) in zip(faces, linkFaces) where f.visible {
+            attFaces.append(AttentionFace(id: f.id, box: lf.box, addressing: f.addressing != nil))
+        }
+        var attHands: [AttentionHand] = []
+        for (h, lh) in zip(hands, linkHands) { attHands.append(AttentionHand(id: h.id, owner: h.owner, extended: h.extended, points: lh.points)) }
+        attention.update(faces: attFaces, hands: attHands, frameSize: size, now: now)
+        for i in faces.indices { faces[i].waving = attention.wavingUntil[faces[i].id] != nil }
+
+        for e in faceEvents + linker.newEvents + helpEvents + attention.newEvents {
             print(String(format: "[%7.2fs] ", now) + e)
             lastEvents.append(e)
         }
@@ -306,9 +321,10 @@ final class Pipeline {
             }
             var talk = ""
             for f in faces { if let g = f.addressing { talk += " | #\(f.id) addressing: " + g } }
-            print(head + " | " + handText.joined(separator: ", ") + talk + (mode == .fast ? fastFaces.summary() : ""))
+            let att = attention.target.map { " | robot -> #\($0.faceID) (\($0.reason)): \($0.turnText)" } ?? ""
+            print(head + " | " + handText.joined(separator: ", ") + talk + att + (mode == .fast ? fastFaces.summary() : ""))
         }
-        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size, alerts: help.alerts)
+        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size, alerts: help.alerts, attention: attention.target)
     }
 
     // MARK: - fast face path (as in ../jetson)
