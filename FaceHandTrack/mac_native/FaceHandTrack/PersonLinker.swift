@@ -12,7 +12,7 @@ import Foundation
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
 struct LinkPolicy {
-    var maxReach: CGFloat = 6.0  // hand centre to face centre, in face widths
+    var maxReach: CGFloat = 4.5  // hand centre to face centre, in face widths (real links seen up to ~3.7)
     var handFaceRatio: CGFloat = 0.6  // typical hand size (wrist..middle knuckle) / face box width
     var minRatio: CGFloat = 0.25, maxRatio: CGFloat = 2.5  // outside this, never the same person
     var sizeWeight: CGFloat = 2.0  // cost per unit of |ln(ratio / handFaceRatio)|
@@ -148,15 +148,17 @@ final class PersonLinker {
             let m = measure(h, f)  // printed so the size rule can be tuned on real people
             newEvents.append(String(format: "hand #%d (%@) -> face #%d (reach %.1f, size %.2f)", h.id, h.handedness, fid, m.reach, m.ratio))
         }
+        let prevOwner = owner
         owner = newOwner
 
         // 2. held gestures (per hand), then who is addressing the camera (per person)
         let live = Set(hands.map(\.id))
         held = held.filter { live.contains($0.key) }
         for h in hands {
-            if h.gesture.isEmpty {
-                held[h.id] = nil
-            } else if held[h.id]?.gesture != h.gesture {
+            if h.gesture.isEmpty || newOwner[h.id] != prevOwner[h.id] {
+                held[h.id] = nil  // the hold restarts when the gesture ends or the hand changes person
+            }
+            if !h.gesture.isEmpty && held[h.id]?.gesture != h.gesture {
                 held[h.id] = (h.gesture, now)
             }
         }

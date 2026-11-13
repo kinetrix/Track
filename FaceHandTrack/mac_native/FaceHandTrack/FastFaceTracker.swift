@@ -19,11 +19,13 @@ struct FastFacePolicy {
     var minEmbedPx: CGFloat = 64  // smallest face side (frame pixels) worth a fingerprint
     var refreshSeconds: TimeInterval = 1.0  // re-fingerprint each visible track this often (one track per frame)
     var embedEMA: Float = 0.8  // weight of the old fingerprint when refreshing
+    var lateReidSeconds: TimeInterval = 2.0  // a new track whose first fingerprint comes this soon can still take a lost ID
     var maxTracks = 3
 }
 
 final class FastTrack {
-    let id: Int
+    var id: Int  // can change once: a new track that turns out to be a lost face takes its old ID
+    let born: TimeInterval
     var box: CGRect  // last detection, frame pixels
     var landmarks: [CGPoint]  // last detection's 5 points, frame pixels
     var velC = CGVector(dx: 0, dy: 0)  // centre velocity, pixels / s
@@ -41,6 +43,7 @@ final class FastTrack {
         landmarks = det.landmarks
         score = det.score
         lastSeen = now
+        born = now
     }
 
     func predict(_ now: TimeInterval) -> CGRect {
@@ -130,6 +133,24 @@ final class FastFaceTracker {
         return bestName
     }
 
+    /// Lost face this fingerprint clearly matches: (gallery index, similarity), else the closest
+    /// similarity seen (for the log).
+    private func lostMatch(_ e: [Float]) -> (index: Int?, best: Float, bestID: Int?) {
+        var best: Float = -1, second: Float = -1, bi = -1
+        for (li, l) in lost.enumerated() {
+            let s = similarity(e, l.emb)
+            if s > best {
+                second = best
+                best = s
+                bi = li
+            } else {
+                second = max(second, s)
+            }
+        }
+        let ok = bi >= 0 && best >= policy.reidSimilarity && best - second >= policy.reidMargin
+        return (ok ? bi : nil, best, bi >= 0 ? lost[bi].id : nil)
+    }
+
     private func lose(_ i: Int, now: TimeInterval) {
         let t = tracks[i]
         if let e = t.emb {
@@ -214,7 +235,13 @@ final class FastFaceTracker {
             } else {
                 t = FastTrack(id: nextID, det: d, now: now)
                 nextID += 1
-                log("face new #\(t.id)")
+                // why no old ID: no fingerprint yet, or the closest lost face was not similar enough
+                var why = " (no fingerprint yet: face small, turned or unclear)"
+                if let e {
+                    let m = lostMatch(e)
+                    why = m.bestID.map { String(format: " (closest lost face #%d, similarity %.2f)", $0, m.best) } ?? ""
+                }
+                log("face new #\(t.id)" + why)
             }
             if let e {
                 t.emb = e
@@ -243,6 +270,13 @@ final class FastFaceTracker {
             let overlapped = dets.indices.contains { $0 != detOf[ti] && d.box.intersects(dets[$0].box) }
             if overlapped { continue }
             guard let e = embed(d) else { break }
+            // first fingerprint of a track that just started: it may be a lost face coming back
+            if t.emb == nil && now - t.born <= p.lateReidSeconds, let li = lostMatch(e).index {
+                let l = lost.remove(at: li)
+                log(String(format: "face #%d is #%d again (similarity %.2f)", t.id, l.id, similarity(e, l.emb)))
+                t.id = l.id
+                if t.name == nil { t.name = l.name }
+            }
             if let old = t.emb {
                 t.emb = normalized(zip(old, e).map { p.embedEMA * $0 + (1 - p.embedEMA) * $1 })
             } else {

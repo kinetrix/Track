@@ -16,7 +16,8 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 
 The default face tracker is the one from the robot version (`../jetson`): YuNet on every
 frame, faces followed from frame to frame, SFace fingerprints to give a returning face its old
-ID back. The EdgeTAM tracker from the iOS app (`../../FaceTrack_v1_iOS`) is still there for
+ID back (also when the first clear view of a returning face comes up to 2 s after it reappears;
+the console says why a face got a new ID). The EdgeTAM tracker from the iOS app (`../../FaceTrack_v1_iOS`) is still there for
 pixel masks. The hand tracker and gesture rules are line-by-line Swift ports of the Python engine.
 
 ## Who is talking to the camera
@@ -26,13 +27,13 @@ holds a gesture is marked as addressing it. No extra model, a few comparisons pe
 
 | Rule | What it does |
 |---|---|
-| reach | a hand belongs only to a face within 6 face widths |
+| reach | a hand belongs only to a face within 4.5 face widths |
 | size | a person's hand (wrist to middle knuckle) is about 0.6 x their face width, so a hand much smaller or larger than a face belongs to someone nearer or farther away (a depth cue from one camera) |
 | side | a right hand is usually on the person's right of their face (follows the Mirror setting) |
 | one each | each person has at most one left and one right hand |
 | sticky | a hand keeps its person unless another fits clearly better |
 | facing | nose roughly between the eyes (YuNet's points) = turned to the camera |
-| addressing | facing + the same gesture held 0.5 s; stays on 1 s after the gesture ends |
+| addressing | facing + the same gesture held 0.5 s by that person's hand (restarts if the hand changes person); stays on 1 s after the gesture ends |
 
 The window draws each hand in its person's colour with a dashed line to their face and the
 label `#2 · Right: Thumbs up (1)` (`?` = no one). The person addressing the camera gets a yellow
