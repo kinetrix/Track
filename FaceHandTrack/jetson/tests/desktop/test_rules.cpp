@@ -183,7 +183,7 @@ int main() {
         PersonLinker D;
         check("depth: a hand a metre behind you goes to the friend", link(D, fs, {behind}) == std::map<int, int>{{1, 2}});
         LinkHand mine{2, "Right", hand_pts(640, 520, 100), ""};  // your hand reaching toward the robot
-        mine.depth = 0.5f;
+        mine.depth = 0.62f;  // 0.38 m in front (own hands were at most 0.3 m in front in the robot runs)
         PersonLinker E;
         check("depth: your hand reaching forward stays yours", link(E, fs, {mine}) == std::map<int, int>{{2, 1}});
         LinkHand unknown{3, "Right", hand_pts(590, 330, 70), ""};  // no depth reading: the other rules decide
@@ -193,6 +193,10 @@ int main() {
         nowhere.depth = 3.5f;
         PersonLinker W;
         check("depth: a hand at no face's distance is no one's", link(W, fs, {nowhere}).empty());
+        LinkHand stretched{6, "Right", hand_pts(640, 520, 100), ""};  // 0.55 m in front: past the limit, no one's
+        stretched.depth = 0.45f;
+        PersonLinker X;
+        check("depth: a hand 0.55 m in front of the nearest face is no one's (robot misses were 0.54-0.59 m)", link(X, fs, {stretched}).empty());
         // robot run 20 Nov, 17-25 s: the nearer person's face unseen, their hands 0.96 m away, the
         // friend's face 1.7 m away: 0.75 m in front of the friend is not the friend's hand
         std::vector<LinkFace> far_only = {face(2, 420, 260, 80)};
@@ -201,6 +205,46 @@ int main() {
         front.depth = 0.96f;
         PersonLinker F;
         check("depth: a hand 0.75 m in front of the only face seen is not theirs", link(F, far_only, {front}).empty());
+    }
+
+    // ---------- arm check: two people at the same distance ----------
+    {
+        std::vector<LinkFace> fs = {face(1, 400, 300, 140), face(2, 760, 300, 140)};
+        fs[0].depth = fs[1].depth = 1.31f;  // robot run 20 Nov, 128 s: both faces at 1.31 m
+        LinkHand between{1, "Left", hand_pts(590, 430, 85), ""};  // between them, both rules about even
+        between.depth = 1.25f;
+        between.arm = {{1, 0.9f}, {2, 0.1f}};  // a body along the line to #1's shoulder, background toward #2
+        PersonLinker A1;
+        check("arm check: the hand goes to the person whose arm reaches it", link(A1, fs, {between}) == std::map<int, int>{{1, 1}});
+        between.arm = {{1, 0.1f}, {2, 0.9f}};
+        PersonLinker A2;
+        check("arm check: ... either way", link(A2, fs, {between}) == std::map<int, int>{{1, 2}});
+    }
+
+    // ---------- owner changes only when it holds ----------
+    {
+        std::vector<LinkFace> fs = {face(1, 400, 300, 140), face(2, 800, 300, 140)};
+        PersonLinker H;
+        std::vector<std::string> ev;
+        for (int i = 0; i < 10; ++i) H.update(fs, {{1, "Right", hand_pts(420, 480, 85), ""}}, i / 30.0, ev);  // under face 1
+        bool held = true;
+        for (int i = 10; i < 14; ++i) {  // 4 frames nearer face 2: not enough
+            H.update(fs, {{1, "Right", hand_pts(780, 480, 85), ""}}, i / 30.0, ev);
+            held = held && H.owner().at(1) == 1;
+        }
+        check("a hand doesn't move to another person for a few frames", held);
+        H.update(fs, {{1, "Right", hand_pts(780, 480, 85), ""}}, 14 / 30.0, ev);
+        check("... and moves on the 5th frame in a row", H.owner().at(1) == 2);
+        std::vector<LinkFace> gone = {face(2, 800, 300, 140)};
+        PersonLinker G;
+        for (int i = 0; i < 10; ++i) G.update(fs, {{1, "Right", hand_pts(420, 480, 85), ""}}, i / 30.0, ev);
+        G.update(gone, {{1, "Right", hand_pts(600, 480, 85), ""}}, 10 / 30.0, ev);
+        check("when its person is gone, the hand moves at once", G.owner().count(1) && G.owner().at(1) == 2);
+        PersonLinker M;  // a hand lost for a moment and given its number back keeps its person
+        for (int i = 0; i < 10; ++i) M.update(fs, {{1, "Right", hand_pts(420, 480, 85), ""}}, i / 30.0, ev);
+        for (int i = 10; i < 13; ++i) M.update(fs, {}, i / 30.0, ev);  // 0.1 s missing
+        M.update(fs, {{1, "Right", hand_pts(780, 480, 85), ""}}, 13 / 30.0, ev);
+        check("a hand back after 0.1 s keeps its person (no instant jump)", M.owner().at(1) == 1);
     }
 
     // ---------- help ----------

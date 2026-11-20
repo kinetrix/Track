@@ -25,5 +25,12 @@ float face_depth(const DepthFrame& d, const cv::Rect2f& box);
 // Distance to a hand: palm points (wrist, knuckles), biased to the near side, since samples that
 // miss the hand land on whatever is behind it.
 float hand_depth(const DepthFrame& d, const std::vector<cv::Point2f>& landmarks);
+// The arm check: along the line from a hand's wrist to a person's shoulder (estimated from the face
+// box, on the hand's side), the share of depth readings that lie on a body at the depth expected
+// between the hand and that face (within `tolerance` metres). An arm reaching to its own shoulder is
+// there; the line to someone else's shoulder crosses empty background or a nearer body.
+// -1 when there are too few readings.
+float arm_support(const DepthFrame& d, const cv::Point2f& wrist, float hand_m, const cv::Rect2f& face, float face_m,
+                  float tolerance = 0.3f);
 
 }  // namespace fht

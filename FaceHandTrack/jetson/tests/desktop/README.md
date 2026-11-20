@@ -14,7 +14,7 @@ Python engine's requirements.
 ORT=/path/to/onnxruntime-linux-x64-1.20.1
 INC="-isystem $TRT/include -isystem $CUDART/include -isystem $NVCC/include -isystem $ORT/include"
 g++ -std=c++17 -O2 $INC -I../../src $(pkg-config --cflags opencv4) run_clip.cpp trt_model_ort.cpp \
-    preprocess_cpu.cpp ../../src/{gpu_timer,face_pipeline,face_tracker,edgetam,face_detector,face_embedder,fast_face_tracker,hands,gestures,hand_pipeline}.cpp \
+    preprocess_cpu.cpp ../../src/{gpu_timer,face_pipeline,face_tracker,edgetam,face_detector,face_embedder,fast_face_tracker,depth,hands,gestures,hand_pipeline}.cpp \
     -o run_clip \
     -L$ORT/lib -lonnxruntime -Wl,-rpath,$ORT/lib $(pkg-config --libs opencv4) -lpthread
 # ONNX files: yunet_640x384, sface, palm/handpose (onnx/models) + the converted EdgeTAM graphs (jetson/models)

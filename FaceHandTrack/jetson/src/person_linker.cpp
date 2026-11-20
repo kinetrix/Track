@@ -76,6 +76,8 @@ bool PersonLinker::cost(const LinkHand& h, const LinkFace& f, float& out) const 
         if (dz < -p.depth_front || dz > p.depth_behind) return false;
         c += p.depth_weight * std::fabs(dz);
     }
+    auto arm = h.arm.find(f.id);
+    if (arm != h.arm.end() && arm->second >= 0) c += p.arm_weight * (1 - arm->second);
     // body pose: the strongest evidence when it is there
     // (20 Nov: a hard "both wrists elsewhere = not theirs" at 2.5 hand sizes excluded the friend,
     // whose pose wrist was 2.6-3.3 away, and handed his hand to the only one left: the nearer person)
@@ -109,6 +111,8 @@ void PersonLinker::reset() {
     held_.clear();
     addressing_.clear();
     pose_ignored_.clear();
+    pending_.clear();
+    last_seen_.clear();
 }
 
 void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<LinkHand>& hands, double now,
@@ -157,6 +161,39 @@ void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<
         new_owner[h.id] = f.id;
         taken.insert(slot);
     }
+    // a hand keeps its person until the new one has won switch_frames frames in a row, unless its
+    // person is gone, can no longer own it, or already has another hand on that side
+    std::set<int> live_hands;
+    for (const auto& h : hands) live_hands.insert(h.id);
+    for (auto it = pending_.begin(); it != pending_.end();) it = live_hands.count(it->first) ? std::next(it) : pending_.erase(it);
+    for (const auto& h : hands) {
+        auto o = owner_.find(h.id);
+        auto n = new_owner.find(h.id);
+        if (o == owner_.end() || n == new_owner.end() || n->second == o->second) {
+            pending_.erase(h.id);
+            continue;
+        }
+        const LinkFace* fo = nullptr;
+        for (const LinkFace* f : visible)
+            if (f->id == o->second) fo = f;
+        float c;
+        if (!fo || !cost(h, *fo, c)) {
+            pending_.erase(h.id);
+            continue;
+        }
+        auto pd = pending_.find(h.id);
+        if (pd == pending_.end() || pd->second.face != n->second) pd = pending_.insert_or_assign(h.id, Pending{n->second, 0}).first;
+        if (++pd->second.frames >= p.switch_frames) {
+            pending_.erase(pd);
+            continue;
+        }
+        bool side_free = true;
+        for (const auto& h2 : hands) {
+            auto o2 = new_owner.find(h2.id);
+            if (h2.id != h.id && o2 != new_owner.end() && o2->second == o->second && h2.handedness == h.handedness) side_free = false;
+        }
+        if (side_free) new_owner[h.id] = o->second;
+    }
     for (const auto& h : hands) {
         auto n = new_owner.find(h.id);
         auto o = owner_.find(h.id);
@@ -165,24 +202,43 @@ void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<
             if (f->id == n->second) {  // printed so the rules can be tuned on real people
                 const float fw = std::max(f->box.width, 1.f);
                 const cv::Point2f hc = mean_point(h.points);
-                char s[320];
-                int n = std::snprintf(s, sizeof(s), "hand #%d (%s) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness.c_str(),
+                char b[96];
+                std::snprintf(b, sizeof(b), "hand #%d (%s) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness.c_str(),
                               f->id, std::hypot(hc.x - (f->box.x + f->box.width / 2), hc.y - (f->box.y + f->box.height / 2)) / fw,
                               hand_size(h.points) / fw);
-                if (h.depth > 0 && f->depth > 0)
-                    n += std::snprintf(s + n, sizeof(s) - n, ", depth hand %.2f m face %.2f m", h.depth, f->depth);
+                std::string line = b;
+                if (h.depth > 0 && f->depth > 0) {
+                    std::snprintf(b, sizeof(b), ", depth hand %.2f m face %.2f m", h.depth, f->depth);
+                    line += b;
+                }
+                for (const auto& [fid, v] : h.arm)
+                    if (v >= 0) {
+                        std::snprintf(b, sizeof(b), ", arm to #%d %.2f", fid, v);
+                        line += b;
+                    }
                 const char* sep = ", pose wrist hand sizes away: ";
-                for (const auto& [id, pose] : poses_) {
-                    const float pd = pose_distance(h, id);
+                for (const auto& kv : poses_) {
+                    const float pd = pose_distance(h, kv.first);
                     if (pd < 0) continue;
-                    n += std::snprintf(s + n, sizeof(s) - n, "%s#%d %.1f", sep, id, pd);
+                    std::snprintf(b, sizeof(b), "%s#%d %.1f", sep, kv.first, pd);
+                    line += b;
                     sep = ", ";
                 }
-                std::snprintf(s + n, sizeof(s) - n, ")");
-                events.push_back(s);
+                events.push_back(line + ")");
             }
     }
     const std::map<int, int> prev_owner = owner_;
+    // hands missing for a moment keep their person (and so their stickiness) if they come back
+    for (const auto& h : hands) last_seen_[h.id] = now;
+    for (auto it = last_seen_.begin(); it != last_seen_.end();) {
+        if (now - it->second > p.remember_seconds) {
+            it = last_seen_.erase(it);
+            continue;
+        }
+        auto o = owner_.find(it->first);
+        if (!live_hands.count(it->first) && o != owner_.end()) new_owner[it->first] = o->second;
+        ++it;
+    }
     owner_ = new_owner;
 
     // 2. held gestures (per hand; restart when the gesture ends or the hand changes person)

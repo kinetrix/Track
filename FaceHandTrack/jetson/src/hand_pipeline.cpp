@@ -22,11 +22,16 @@ void HandPipeline::process(const cv::Mat& bgr, std::vector<std::string>& events)
         h.fingers = g.fingers;
         h.extended = g.extended;
         h.gesture = smoothers_[t.id](g.label);
+        last_seen_[t.id] = index_;
         live.insert(t.id);
         hands_.push_back(h);
     }
-    for (auto it = smoothers_.begin(); it != smoothers_.end();)
-        it = live.count(it->first) ? std::next(it) : smoothers_.erase(it);
+    // a lost hand's gesture smoothing is kept briefly: the tracker may give its number back
+    for (auto it = smoothers_.begin(); it != smoothers_.end();) {
+        const bool keep = live.count(it->first) || index_ - last_seen_[it->first] <= kKeepFrames;
+        if (!keep) last_seen_.erase(it->first);
+        it = keep ? std::next(it) : smoothers_.erase(it);
+    }
     ms_gesture += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     ++index_;
 }

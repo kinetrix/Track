@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "depth.hpp"
 #include "face_detector.hpp"
 #include "face_embedder.hpp"
 #include "face_source.hpp"
@@ -35,6 +36,12 @@ struct FastFacePolicy {
     double late_reid_seconds = 3.0;   // a new track keeps checking lost faces this long ...
     double late_reid_interval = 0.25; // ... with a fresh fingerprint this often (first views are often blurred)
     int max_tracks = 3;
+    // with depth (RealSense): a face with no usable fingerprint (small, turned, blurred) that appears
+    // where a face was just lost, at the same distance, is that face again (robot runs: far or turned
+    // faces kept getting new numbers)
+    float relink_depth = 0.25f;    // metres
+    float relink_reach = 1.5f;     // centre within this many face widths of the lost face's last box
+    double relink_seconds = 3.0;   // lost at most this long ago
 };
 
 struct FastTrack {
@@ -56,6 +63,7 @@ struct FastTrack {
     bool late_logged = false;
     float self_sim = 0;          // latest fresh fingerprint vs the track's own (tuning)
     float name_sim = -2;         // closest saved name (tuning)
+    float depth = -1;            // metres from the camera at the last detection, -1 unknown
     std::string closest_name;
     cv::Rect2f predict(double now) const;
 };
@@ -65,6 +73,9 @@ struct LostFace {
     Embedding emb;
     double lost_at;
     std::string name;
+    bool has_emb = true;
+    cv::Rect2f box;              // where it was last seen
+    float depth = -1;            // and how far away
 };
 
 struct KnownFace {
@@ -76,7 +87,9 @@ class FastFaceTracker {
 public:
     FastFaceTracker(FaceEmbedder* embedder, const FastFacePolicy& pol) : emb_(embedder), pol_(pol) {}
     // dets: this frame's detections (>= keep_score); bgr: the frame (for fingerprints).
-    void update(const std::vector<FaceDet>& dets, const cv::Mat& bgr, double now, std::vector<std::string>& events);
+    // det_depth (optional): metres to each detection, -1 unknown.
+    void update(const std::vector<FaceDet>& dets, const cv::Mat& bgr, double now, std::vector<std::string>& events,
+                const std::vector<float>& det_depth = {});
     const std::vector<FastTrack>& tracks() const { return tracks_; }
     std::vector<FastTrack>& tracks() { return tracks_; }
     std::vector<KnownFace> known;  // saved names
@@ -111,6 +124,7 @@ public:
     // Saves the fingerprint of face `prefer_id` (else the largest visible face) as `name`.
     std::string save_face(const std::string& name, int prefer_id);
     std::string forget_names();
+    void set_depth(const DepthFrame* d) { depth_ = d; }  // this frame's depth (or nullptr) before process()
 
 private:
     void load_names();
@@ -124,6 +138,7 @@ private:
     std::vector<FaceDet> dets_;
     double ms_detect_ = 0;
     std::string names_file_;
+    const DepthFrame* depth_ = nullptr;
 };
 
 }  // namespace fht

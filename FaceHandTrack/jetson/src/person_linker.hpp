@@ -14,7 +14,9 @@
 //          joins each hand to its person. A pose whose nose is not on its own face is someone
 //          else's body and is ignored; when two poses claim a hand, only a clearly closer one counts
 //   depth  with the RealSense depth stream (robot only for now), a hand can only belong to a person
-//          whose face is at about the same distance: hands reach forward, not a metre backward
+//          whose face is at about the same distance: hands reach forward, not a metre backward;
+//          and the line from the wrist to that person's shoulder should run over a body (an arm),
+//          not over empty background or someone nearer
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -34,6 +36,9 @@ struct LinkPolicy {
     float wrong_side_penalty = 1.0f;
     float above_head_penalty = 1.0f;
     float sticky_bonus = 0.75f;
+    double remember_seconds = 0.5;  // a hand missing this long or less keeps its person if it comes back
+    int switch_frames = 5;          // a hand moves to another person only after this many frames in a row
+                                    // say so (unless its person can no longer own it): no frame-to-frame flips
     float max_yaw = 0.35f;          // nose offset from the eye midpoint / eye distance: below = facing
     double hold_seconds = 0.5;      // a gesture held this long while facing = addressing
     double linger_seconds = 1.0;    // keep "addressing" this long after the gesture ends
@@ -45,11 +50,12 @@ struct LinkPolicy {
     float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
     float pose_nose_reach = 1.0f;   // pose nose farther than this many face heights from its face: someone else's pose
     float pose_clearly_closer = 0.6f;  // two poses claim a hand: one counts only if this much closer
-    float depth_front = 0.6f;       // a hand at most this many metres nearer the camera than its face (robot
-                                    // run 20 Nov: own hands 0-0.3 m nearer; at 0.9 the nearer person's hands,
-                                    // 0.75 m in front of the friend, went to him while their face was unseen) ...
+    float depth_front = 0.45f;      // a hand at most this many metres nearer the camera than its face (robot
+                                    // runs 20 Nov: own hands at most 0.3 m nearer; the friend's hands that went
+                                    // to the wrong person were 0.54-0.75 m nearer) ...
     float depth_behind = 0.35f;     // ... and at most this many metres farther
     float depth_weight = 4.0f;      // within that, cost per metre of depth difference (decides over reach and size)
+    float arm_weight = 2.0f;        // cost x (1 - arm support): no body along the wrist-to-shoulder line
 };
 
 struct PoseWrist {
@@ -76,6 +82,7 @@ struct LinkHand {
     std::vector<cv::Point2f> points;    // 21 landmarks, frame pixels
     std::string gesture;                // stable gesture, "" = none
     float depth = -1;                   // metres from the camera, -1 unknown
+    std::map<int, float> arm;           // face id -> arm support 0..1 (depth.hpp arm_support), when known
 };
 
 struct PersonState {
@@ -111,6 +118,10 @@ private:
     std::map<int, LinkPose> poses_;   // accepted poses, this frame only
     std::set<int> pose_ignored_;      // faces whose pose was not on their face (logged once)
     std::map<int, int> owner_;
+    struct Pending { int face; int frames; };
+    std::map<int, Pending> pending_;
+    std::map<int, double> last_seen_;  // hand id -> time last seen: a lost hand's person is kept briefly
+                                       // (the hand tracker may give the same number back)  // hand id -> the person it may move to, and for how many frames
     std::map<int, PersonState> people_;
     std::map<int, bool> facing_;
     struct Held { std::string gesture; double since; };

@@ -42,6 +42,8 @@ public:
 private:
     HandTracker tracker_;
     std::map<int, GestureSmoother> smoothers_;
+    std::map<int, long> last_seen_;      // hand id -> frame index it was last seen
+    static constexpr long kKeepFrames = 15;  // as HandPolicy::revive_frames
     std::vector<HandResult> hands_;
     long index_ = 0;
 };

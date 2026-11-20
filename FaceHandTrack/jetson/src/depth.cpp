@@ -1,6 +1,7 @@
 #include "depth.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #ifdef HAVE_REALSENSE
 #include <librealsense2/rs.hpp>
@@ -52,6 +53,23 @@ float hand_depth(const DepthFrame& d, const std::vector<cv::Point2f>& lm) {
     for (int j : {0, 1, 5, 9, 13, 17}) pts.push_back(lm[j]);
     pts.push_back((lm[0] + lm[9]) * 0.5f);  // palm centre
     return d.at(pts, 0.3f, 1);
+}
+
+float arm_support(const DepthFrame& d, const cv::Point2f& wrist, float hand_m, const cv::Rect2f& face, float face_m,
+                  float tolerance) {
+    if (!d.valid() || hand_m <= 0 || face_m <= 0) return -1;
+    const cv::Point2f fc(face.x + face.width / 2, face.y + face.height / 2);
+    const float side = wrist.x < fc.x ? -1.f : 1.f;
+    const cv::Point2f shoulder(fc.x + side * 0.8f * face.width, face.y + face.height * 1.8f);
+    int valid = 0, on_body = 0;
+    for (int i = 1; i <= 8; ++i) {
+        const float t = 0.1f * i + 0.05f;  // 0.15 .. 0.85: skip the hand and the shoulder themselves
+        const float m = d.at({wrist + t * (shoulder - wrist)}, 0.5f, 1);
+        if (m <= 0) continue;
+        ++valid;
+        on_body += std::fabs(m - (hand_m + t * (face_m - hand_m))) <= tolerance;
+    }
+    return valid < 4 ? -1.f : static_cast<float>(on_body) / valid;
 }
 
 }  // namespace fht

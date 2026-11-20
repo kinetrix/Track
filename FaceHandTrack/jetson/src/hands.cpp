@@ -277,6 +277,8 @@ void HandTracker::update(const cv::Mat& bgr, long frame_index, std::vector<std::
             else
                 std::snprintf(why, sizeof(why), "crop outside frame");
             events.push_back("hand drop #" + std::to_string(t.id) + " lost (" + why + ")");
+            lost_.push_back({t, frame_index});
+            look_now_ = true;
             continue;
         }
         t.r = *r;
@@ -284,9 +286,13 @@ void HandTracker::update(const cv::Mat& bgr, long frame_index, std::vector<std::
         alive.push_back(t);
     }
     tracks_ = alive;
+    for (auto it = lost_.begin(); it != lost_.end();)
+        it = frame_index - it->frame > pol_.revive_frames ? lost_.erase(it) : std::next(it);
 
-    // 2) look for new hands
-    if (static_cast<int>(tracks_.size()) < pol_.max_hands && (tracks_.empty() || frame_index % pol_.palm_interval == 0)) {
+    // 2) look for new hands (also right after a hand was lost, to pick it up again quickly)
+    const bool look = tracks_.empty() || frame_index % pol_.palm_interval == 0 || look_now_;
+    look_now_ = false;
+    if (static_cast<int>(tracks_.size()) < pol_.max_hands && look) {
         auto t0 = Clock::now();
         std::vector<PalmDet> palms = palm_.detect(bgr);
         ms_palm += ms_since(t0);
@@ -300,10 +306,31 @@ void HandTracker::update(const cv::Mat& bgr, long frame_index, std::vector<std::
             ms_landmarks += ms_since(t0);
             if (!r || r->presence < pol_.min_presence_new) continue;
             HandTrack t;
-            t.id = next_id_++;
             t.r = *r;
+            // the same hand found again where it was just lost: it keeps its number (and with it its
+            // person, gesture and timers)
+            const auto nb = hand_box(t.r.landmarks);
+            auto back = lost_.end();
+            float best = pol_.revive_iou;
+            for (auto it = lost_.begin(); it != lost_.end(); ++it) {
+                const auto lb = hand_box(it->t.r.landmarks);
+                const float o = iou4(nb.data(), lb.data());
+                if (o > best) {  // Left/Right labels can flip, so overlap alone decides
+                    best = o;
+                    back = it;
+                }
+            }
+            if (back != lost_.end()) {
+                t.id = back->t.id;
+                t.age = back->t.age;
+                events.push_back("hand back #" + std::to_string(t.id) + " (found again " +
+                                 std::to_string(frame_index - back->frame) + " frames after it was lost)");
+                lost_.erase(back);
+            } else {
+                t.id = next_id_++;
+                events.push_back("hand new #" + std::to_string(t.id));
+            }
             tracks_.push_back(t);
-            events.push_back("hand new #" + std::to_string(t.id));
         }
     }
 

@@ -86,6 +86,7 @@ int FastFaceTracker::lost_match(const Embedding& e, float& best, int& best_id) c
     int bi = -1;
     best = -2;
     for (size_t li = 0; li < lost_.size(); ++li) {
+        if (!lost_[li].has_emb) continue;
         const float s = similarity(e, lost_[li].emb);
         if (s > best) {
             second = best;
@@ -101,13 +102,12 @@ int FastFaceTracker::lost_match(const Embedding& e, float& best, int& best_id) c
 
 void FastFaceTracker::lose(size_t i, double now, std::vector<std::string>& events) {
     const FastTrack& t = tracks_[i];
-    if (t.has_emb) {
-        // one gallery entry per person: a newer fingerprint of the same person replaces the older one
+    if (t.has_emb)  // one gallery entry per person: a newer fingerprint of the same person replaces the older one
         lost_.erase(std::remove_if(lost_.begin(), lost_.end(),
-                                   [&](const LostFace& l) { return similarity(l.emb, t.emb) >= pol_.reid_similarity; }),
+                                   [&](const LostFace& l) { return l.has_emb && similarity(l.emb, t.emb) >= pol_.reid_similarity; }),
                     lost_.end());
-        lost_.push_back({t.id, t.emb, now, t.name});
-    }
+    // kept with or without a fingerprint: without one it can still come back by place and distance
+    lost_.push_back({t.id, t.emb, now, t.name, t.has_emb, t.box, t.depth});
     events.push_back("face drop #" + std::to_string(t.id) + " lost");
     tracks_.erase(tracks_.begin() + static_cast<long>(i));
 }
@@ -120,9 +120,13 @@ void FastFaceTracker::apply_names() {
 }
 
 void FastFaceTracker::update(const std::vector<FaceDet>& dets, const cv::Mat& bgr, double now,
-                             std::vector<std::string>& events) {
+                             std::vector<std::string>& events, const std::vector<float>& det_depth) {
+    auto depth_of = [&](size_t di) { return di < det_depth.size() ? det_depth[di] : -1.f; };
     const FastFacePolicy& p = pol_;
-    lost_.erase(std::remove_if(lost_.begin(), lost_.end(), [&](const LostFace& l) { return now - l.lost_at > p.gallery_seconds; }),
+    lost_.erase(std::remove_if(lost_.begin(), lost_.end(),
+                               [&](const LostFace& l) {
+                                   return now - l.lost_at > (l.has_emb ? p.gallery_seconds : p.relink_seconds);
+                               }),
                 lost_.end());
 
     // 1. Link detections to tracks by overlap with each track's predicted box (best pairs first).
@@ -142,8 +146,12 @@ void FastFaceTracker::update(const std::vector<FaceDet>& dets, const cv::Mat& bg
         track_of[di] = ti;
     }
     for (size_t ti = 0; ti < tracks_.size(); ++ti) {
-        if (det_of[ti] < 0) tracks_[ti].visible = false;
-        else take(tracks_[ti], dets[det_of[ti]], now, true);
+        if (det_of[ti] < 0) {
+            tracks_[ti].visible = false;
+        } else {
+            take(tracks_[ti], dets[det_of[ti]], now, true);
+            if (depth_of(det_of[ti]) > 0) tracks_[ti].depth = depth_of(det_of[ti]);
+        }
     }
 
     // 2. Detections no track claimed: a returning face (fingerprint matches a missing track or a
@@ -172,27 +180,54 @@ void FastFaceTracker::update(const std::vector<FaceDet>& dets, const cv::Mat& bg
         if (has_e) {
             for (size_t ti = 0; ti < tracks_.size(); ++ti)
                 if (!tracks_[ti].visible && tracks_[ti].has_emb) consider(similarity(e, tracks_[ti].emb), static_cast<int>(ti), -1);
-            for (size_t li = 0; li < lost_.size(); ++li) consider(similarity(e, lost_[li].emb), -1, static_cast<int>(li));
+            for (size_t li = 0; li < lost_.size(); ++li)
+                if (lost_[li].has_emb) consider(similarity(e, lost_[li].emb), -1, static_cast<int>(li));
         }
         if (best < p.reid_similarity || best - second < p.reid_margin) best_track = best_lost = -1;
+        // no fingerprint match: the one face lost just there, at the same distance, if there is exactly one
+        bool by_depth = false;
+        const float dz = depth_of(di);
+        if (best_track < 0 && best_lost < 0 && dz > 0) {
+            int n = 0, rt = -1, rl = -1;
+            auto near = [&](const cv::Rect2f& b, float bz) {
+                const float w = std::max(b.width, d.box.width);
+                const float ratio = d.box.width / std::max(b.width, 1.f);
+                return bz > 0 && std::fabs(bz - dz) <= p.relink_depth && ratio > 0.6f && ratio < 1.6f &&
+                       cv::norm(centre(d.box) - centre(b)) <= p.relink_reach * w;
+            };
+            for (size_t ti = 0; ti < tracks_.size(); ++ti)
+                if (!tracks_[ti].visible && near(tracks_[ti].box, tracks_[ti].depth)) ++n, rt = static_cast<int>(ti);
+            for (size_t li = 0; li < lost_.size(); ++li)
+                if (now - lost_[li].lost_at <= p.relink_seconds && near(lost_[li].box, lost_[li].depth))
+                    ++n, rl = static_cast<int>(li), rt = -1;
+            if (n == 1) {
+                best_track = rt;
+                best_lost = rt >= 0 ? -1 : rl;
+                by_depth = true;
+            }
+        }
         if (best_track >= 0) {  // missing for a moment, then back somewhere the prediction didn't expect
             FastTrack& t = tracks_[best_track];
             take(t, d, now, false);
+            if (dz > 0) t.depth = dz;
             det_of[best_track] = di;
-            events.push_back(fmt("face back #%d (similarity %.2f)", t.id, best));
+            events.push_back(by_depth ? fmt("face back #%d (same place and distance, %.2f m)", t.id, dz)
+                                      : fmt("face back #%d (similarity %.2f)", t.id, best));
             continue;
         }
         if (static_cast<int>(tracks_.size()) >= p.max_tracks) continue;
         FastTrack t;
         take(t, d, now, false);
         t.born = now;
+        t.depth = dz;
         if (best_lost >= 0) {
             const LostFace l = lost_[best_lost];
             lost_.erase(lost_.begin() + best_lost);
             t.id = l.id;
             t.name = l.name;
             t.revived = true;
-            events.push_back(fmt("face back #%d after %.1fs (similarity %.2f)", t.id, now - l.lost_at, best));
+            events.push_back(by_depth ? fmt("face back #%d after %.1fs (same place and distance, %.2f m)", t.id, now - l.lost_at, dz)
+                                      : fmt("face back #%d after %.1fs (similarity %.2f)", t.id, now - l.lost_at, best));
         } else {
             t.id = next_id_++;
             std::string why = " (no fingerprint yet: face small, turned or unclear)";
@@ -371,7 +406,10 @@ void FastFacePipeline::process(const cv::Mat& bgr, double now, std::vector<std::
     frame_.upload(bgr, detector_.stream());
     dets_ = detector_.detect(frame_, params_);
     ms_detect_ += detector_.ms;
-    tracker_.update(dets_, bgr, now, events);
+    std::vector<float> dz;
+    if (depth_ && depth_->valid())
+        for (const FaceDet& d : dets_) dz.push_back(face_depth(*depth_, d.box));
+    tracker_.update(dets_, bgr, now, events, dz);
 }
 
 std::vector<FaceOut> FastFacePipeline::faces() const {

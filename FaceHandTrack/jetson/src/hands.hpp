@@ -63,6 +63,10 @@ struct HandPolicy {
     float min_presence_new = 0.8f;   // ... to start a new hand
     float overlap_iou = 0.3f;        // a detected palm overlapping a tracked hand's palm this much is that hand
     float duplicate_iou = 0.5f;      // two tracked hands overlapping this much -> drop the younger
+    int revive_frames = 15;          // a hand found again within this many frames where a hand was just lost
+                                     // keeps that hand's number (robot runs: most "new" hands were the same
+                                     // hand dipping under min_presence for a frame or two)
+    float revive_iou = 0.2f;         // ... if its box overlaps the lost hand's last box this much
 };
 
 struct HandTrack {
@@ -89,6 +93,9 @@ private:
     HandPolicy pol_;
     bool mirrored_;
     std::vector<HandTrack> tracks_;
+    struct Lost { HandTrack t; long frame; };
+    std::vector<Lost> lost_;   // recently lost hands, to give their number back
+    bool look_now_ = false;    // a hand was just lost: run the palm detector on the next frame
     int next_id_ = 1;
 };
 

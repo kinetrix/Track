@@ -25,6 +25,7 @@ struct LinkPolicy {
     var wrongSidePenalty: CGFloat = 1.0  // hand clearly on the other side of the face (crossed arm)
     var aboveHeadPenalty: CGFloat = 1.0  // hand far above the head
     var stickyBonus: CGFloat = 0.75  // previous owner's cost is lowered by this much
+    var switchFrames = 5  // a hand moves to another person only after this many frames in a row say so
     var maxYaw: CGFloat = 0.35  // nose offset from the eye midpoint / eye distance: below = facing the camera
     var holdSeconds: TimeInterval = 0.5  // a gesture held this long while facing = addressing
     var lingerSeconds: TimeInterval = 1.0  // keep "addressing" this long after the gesture ends
@@ -76,7 +77,8 @@ final class PersonLinker {
     private var addressing: [Int: (gesture: String, until: TimeInterval)] = [:]  // per face id
     private(set) var newEvents: [String] = []
     private var poses: [Int: LinkPose] = [:]  // per face id, accepted poses this frame only
-    private var poseIgnored: Set<Int> = []  // face ids whose pose was not on their face (logged once)
+    private var poseIgnored: Set<Int> = []
+    private var pending: [Int: (face: Int, frames: Int)] = [:]  // hand id -> person it may move to  // face ids whose pose was not on their face (logged once)
 
     /// Hand wrist distance to a face's pose wrists, in hand sizes: (same-side wrist or nil if not
     /// visible, nearest visible wrist or nil if none).
@@ -98,6 +100,7 @@ final class PersonLinker {
         held.removeAll()
         addressing.removeAll()
         poseIgnored.removeAll()
+        pending.removeAll()
     }
 
     /// Is this face turned to the camera? From YuNet's points: right eye, left eye, nose, mouth corners.
@@ -207,6 +210,20 @@ final class PersonLinker {
             if taken.contains(slot) { continue }
             newOwner[h.id] = f.id
             taken.insert(slot)
+        }
+        // a hand keeps its person until the new one has won switchFrames frames in a row, unless its
+        // person is gone, can no longer own it, or already has another hand on that side
+        let liveIDs = Set(hands.map(\.id))
+        pending = pending.filter { liveIDs.contains($0.key) }
+        for h in hands {
+            guard let o = owner[h.id], let n = newOwner[h.id], n != o else { pending[h.id] = nil; continue }
+            guard let fo = visible.first(where: { $0.id == o }), cost(h, fo) != nil else { pending[h.id] = nil; continue }
+            var pd = pending[h.id].flatMap { $0.face == n ? $0 : nil } ?? (n, 0)
+            pd.frames += 1
+            if pd.frames >= pol.switchFrames { pending[h.id] = nil; continue }
+            pending[h.id] = pd
+            let sideTaken = hands.contains { $0.id != h.id && newOwner[$0.id] == o && $0.handedness == h.handedness }
+            if !sideTaken { newOwner[h.id] = o }
         }
         for h in hands where newOwner[h.id] != owner[h.id] {
             guard let fid = newOwner[h.id], let f = visible.first(where: { $0.id == fid }) else { continue }

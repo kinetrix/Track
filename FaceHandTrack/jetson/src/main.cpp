@@ -301,6 +301,7 @@ int main(int argc, char** argv) {
             });
         if (faces) {
             const auto tf = std::chrono::steady_clock::now();
+            if (fast) fast->set_depth(&depth);  // far or turned faces keep their number by place and distance
             faces->process(frame, now, face_events);
             sum_face += ms_since(tf);
         }
@@ -320,6 +321,9 @@ int main(int argc, char** argv) {
             LinkHand lh{h.id, h.handedness, {}, h.gesture};
             for (const auto& q : h.landmarks) lh.points.emplace_back(q.x, q.y);
             lh.depth = hand_depth(depth, lh.points);
+            if (lh.depth > 0 && lh.points.size() == 21)
+                for (const LinkFace& f : lfaces)
+                    if (f.visible && f.depth > 0) lh.arm[f.id] = arm_support(depth, lh.points[0], lh.depth, f.box, f.depth);
             lhands.push_back(lh);
         }
         std::vector<std::string> rule_events;
