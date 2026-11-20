@@ -11,7 +11,7 @@ import Foundation
 ///   side   a right hand is usually on the person's right of their face
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
-///   pose   when body poses are known (2+ people in view), a hand whose wrist sits on the same-side
+///   pose   when body poses are known (hands in view), a hand whose wrist sits on the same-side
 ///          wrist of a person's pose (left hand, left wrist) belongs to that person, and a person
 ///          whose visible wrists are both elsewhere cannot own it. A pose whose nose is not on its
 ///          own face is someone else's body and is ignored; when two poses claim the same hand,

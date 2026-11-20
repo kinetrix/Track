@@ -42,7 +42,7 @@ struct PipelineStats {
     var encodeMs: Double = 0
     var perFaceMs: Double = 0
     var embedMs: Double = 0  // SFace fingerprints this frame (fast tracker)
-    var poseMs: Double = 0  // body poses (only while 2+ people and hands are in view)
+    var poseMs: Double = 0  // body poses (only while hands are in view)
     var palmMs: Double = 0
     var landmarksMs: Double = 0
     var totalMs: Double = 0  // moving average
@@ -258,12 +258,14 @@ final class Pipeline {
             let pts = h.landmarks.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
             linkHands.append(LinkHand(id: h.id, handedness: h.handedness, points: pts, gesture: h.gesture))
         }
-        // body poses join hands to bodies, needed only to tell people apart: 2+ faces and some hands
+        // body poses join hands to bodies whenever hands are in view: with 2+ faces to tell people apart,
+        // with one face to leave a hand unowned when it is on neither of that person's wrists (the
+        // friend behind whose face is not seen: 20 Nov, his hands all went to the one face in view)
         var bodyPoses: [Int: LinkPose] = [:]
         var drawnPoses: [Int: [CGPoint?]] = [:]
         var poseMs = 0.0
         let visibleFaces = linkFaces.filter(\.visible)
-        if visibleFaces.count >= 2 && !linkHands.isEmpty {
+        if !visibleFaces.isEmpty && !linkHands.isEmpty {
             let t = CFAbsoluteTimeGetCurrent()
             withBGRA(pb) { img in
                 for f in visibleFaces {

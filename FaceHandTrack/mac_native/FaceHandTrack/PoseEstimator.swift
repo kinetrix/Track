@@ -6,8 +6,9 @@ import Foundation
 /// Body pose for one person (MediaPipe pose landmarker, OpenCV Zoo pose_estimation_mediapipe_2023mar,
 /// Apache-2.0): 33 body points from a crop built around that person's face. No person detector:
 /// the face is already known (YuNet), so each pose belongs to a known face from the start.
-/// Used only when 2+ people are in view, to join each hand to its own body (one camera has no
-/// depth, and hand size alone could not tell a farther person's hand from a nearer one's).
+/// Run while hands are in view, to join each hand to its own body (one camera has no depth, and
+/// hand size alone could not tell a farther person's hand from a nearer one's, nor from the hand
+/// of someone whose face is not seen).
 struct BodyPose {
     let faceID: Int
     let points: [CGPoint]  // 33 + 6 helper points, frame pixels (MediaPipe order: 15/16 wrists, 11/12 shoulders, 13/14 elbows)

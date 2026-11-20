@@ -13,7 +13,7 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 | 21 points per hand | MediaPipe hand landmarks (Google, Apache-2.0) | GPU |
 | Gestures | hand-written rules on the 21 points | CPU (Swift) |
 | Whose hand, who is talking to the camera | rules on the face and hand boxes | CPU (Swift) |
-| Body pose (only with 2+ people and hands in view: whose hand) | MediaPipe pose landmarker (OpenCV Zoo, Apache-2.0), 256x256 crop from each face, 2.6 MB | Neural Engine |
+| Body pose (only while hands are in view: whose hand) | MediaPipe pose landmarker (OpenCV Zoo, Apache-2.0), 256x256 crop from each face, 2.6 MB | Neural Engine |
 | Help requests (Signal for Help, both hands up) | rules on the hand points (no model) | CPU (Swift) |
 | Waving to call the robot, where to turn | rules on hand motion and face position (no model) | CPU (Swift) |
 
@@ -36,7 +36,7 @@ holds a gesture is marked as addressing it. No extra model, a few comparisons pe
 | side | a right hand is usually on the person's right of their face (follows the Mirror setting) |
 | one each | each person has at most one left and one right hand |
 | sticky | a hand keeps its person unless another fits clearly better |
-| pose | with 2+ people and hands in view, each person's body pose is found from a crop around their face; a hand whose wrist is within 1 hand size of the same-side wrist of a person's pose (left hand, left wrist) is theirs (overrides the other rules), and a person whose two visible wrists are both more than 2.5 hand sizes away can't own it. A pose whose nose isn't on its own face (the crop around a near face also holds the people behind, and the model can latch onto one of them) is ignored, and when two poses claim the same hand only a clearly closer one counts. Fixes a farther person's hand being given to the nearer person (one camera has no depth, and size alone couldn't tell) |
+| pose | while hands are in view, each person's body pose is found from a crop around their face; a hand whose wrist is within 1 hand size of the same-side wrist of a person's pose (left hand, left wrist) is theirs (overrides the other rules), and a person whose two visible wrists are both more than 2.5 hand sizes away can't own it. A pose whose nose isn't on its own face (the crop around a near face also holds the people behind, and the model can latch onto one of them) is ignored, and when two poses claim the same hand only a clearly closer one counts. With one face in view, a hand on neither of that person's visible wrists is left unowned (`?`): it belongs to someone whose face isn't seen. Fixes a farther person's hand being given to the nearer person (one camera has no depth, and size alone couldn't tell) |
 | facing | nose roughly between the eyes (YuNet's points) = turned to the camera |
 | addressing | facing + the same gesture held 0.5 s by that person's hand (restarts if the hand changes person); stays on 1 s after the gesture ends |
 
