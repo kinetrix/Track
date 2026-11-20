@@ -32,9 +32,17 @@ bool PersonLinker::yaw(const std::vector<cv::Point2f>& lm, float& out) {
 
 float PersonLinker::pose_distance(const LinkHand& h, int face_id) const {
     auto it = poses_.find(face_id);
+    if (it == poses_.end() || it->second.wrists.size() != 2 || h.points.size() != 21) return -1;
+    const PoseWrist& w = it->second.wrists[h.handedness == "Left" ? 0 : 1];
+    if (w.visibility < policy.pose_visible) return -1;
+    return std::hypot(h.points[0].x - w.point.x, h.points[0].y - w.point.y) / std::max(hand_size(h.points), 1.f);
+}
+
+float PersonLinker::pose_distance_any(const LinkHand& h, int face_id) const {
+    auto it = poses_.find(face_id);
     if (it == poses_.end() || h.points.size() != 21) return -1;
     float best = -1;
-    for (const PoseWrist& w : it->second)
+    for (const PoseWrist& w : it->second.wrists)
         if (w.visibility >= policy.pose_visible) {
             const float d = std::hypot(h.points[0].x - w.point.x, h.points[0].y - w.point.y);
             if (best < 0 || d < best) best = d;
@@ -63,13 +71,22 @@ bool PersonLinker::cost(const LinkHand& h, const LinkFace& f, float& out) const 
     auto it = owner_.find(h.id);
     if (it != owner_.end() && it->second == f.id) c -= p.sticky_bonus;
     // body pose: the strongest evidence when it is there
-    const float pd = pose_distance(h, f.id);
-    if (pd >= 0) {
+    const float any = pose_distance_any(h, f.id);
+    if (any > p.pose_elsewhere) {
         int visible = 0;
-        for (const PoseWrist& w : poses_.at(f.id)) visible += w.visibility >= p.pose_visible;
-        if (pd <= p.pose_match) c -= p.pose_bonus;
-        else if (pd > p.pose_elsewhere && visible == 2) return false;  // both wrists seen, both elsewhere
-        else if (pd > p.pose_elsewhere) c += p.pose_penalty;
+        for (const PoseWrist& w : poses_.at(f.id).wrists) visible += w.visibility >= p.pose_visible;
+        if (visible == 2) return false;  // both wrists seen, both elsewhere
+    }
+    const float pd = pose_distance(h, f.id);
+    if (pd >= 0 && pd <= p.pose_match) {
+        float rival = -1;  // another pose claiming the same hand: only a clearly closer claim counts
+        for (const auto& [id, pose] : poses_) {
+            const float d = id == f.id ? -1 : pose_distance(h, id);
+            if (d >= 0 && d <= p.pose_match && (rival < 0 || d < rival)) rival = d;
+        }
+        if (rival < 0 || pd <= p.pose_clearly_closer * rival) c -= p.pose_bonus;
+    } else if (pd > p.pose_elsewhere) {
+        c += p.pose_penalty;
     }
     out = c;
     return true;
@@ -81,15 +98,31 @@ void PersonLinker::reset() {
     facing_.clear();
     held_.clear();
     addressing_.clear();
+    pose_ignored_.clear();
 }
 
 void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<LinkHand>& hands, double now,
-                          std::vector<std::string>& events, const std::map<int, std::vector<PoseWrist>>& poses) {
+                          std::vector<std::string>& events, const std::map<int, LinkPose>& poses) {
     const LinkPolicy& p = policy;
-    poses_ = poses;
     std::vector<const LinkFace*> visible;
     for (const auto& f : faces)
         if (f.visible) visible.push_back(&f);
+    // a pose found from a crop around a face can latch onto another person in the crop
+    poses_.clear();
+    for (const LinkFace* f : visible) {
+        auto it = poses.find(f->id);
+        if (it == poses.end()) continue;
+        const float off = std::hypot(it->second.nose.x - (f->box.x + f->box.width / 2),
+                                     it->second.nose.y - (f->box.y + f->box.height / 2)) / std::max(f->box.height, 1.f);
+        if (off <= p.pose_nose_reach) {
+            poses_[f->id] = it->second;
+            pose_ignored_.erase(f->id);
+        } else if (pose_ignored_.insert(f->id).second) {
+            char s[160];
+            std::snprintf(s, sizeof(s), "pose for face #%d ignored: its nose is %.1f face heights from the face (someone else's body)", f->id, off);
+            events.push_back(s);
+        }
+    }
     for (const auto& f : faces) {
         float y;
         if (yaw(f.landmarks, y)) facing_[f.id] = y <= p.max_yaw;
@@ -122,12 +155,17 @@ void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<
             if (f->id == n->second) {  // printed so the rules can be tuned on real people
                 const float fw = std::max(f->box.width, 1.f);
                 const cv::Point2f hc = mean_point(h.points);
-                char s[200];
+                char s[320];
                 int n = std::snprintf(s, sizeof(s), "hand #%d (%s) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness.c_str(),
                               f->id, std::hypot(hc.x - (f->box.x + f->box.width / 2), hc.y - (f->box.y + f->box.height / 2)) / fw,
                               hand_size(h.points) / fw);
-                const float pd = pose_distance(h, f->id);
-                if (pd >= 0) n += std::snprintf(s + n, sizeof(s) - n, ", pose wrist %.1f hand sizes away", pd);
+                const char* sep = ", pose wrist hand sizes away: ";
+                for (const auto& [id, pose] : poses_) {
+                    const float pd = pose_distance(h, id);
+                    if (pd < 0) continue;
+                    n += std::snprintf(s + n, sizeof(s) - n, "%s#%d %.1f", sep, id, pd);
+                    sep = ", ";
+                }
                 std::snprintf(s + n, sizeof(s) - n, ")");
                 events.push_back(s);
             }

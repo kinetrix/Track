@@ -11,9 +11,11 @@ import Foundation
 ///   side   a right hand is usually on the person's right of their face
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
-///   pose   when body poses are known (2+ people in view), a hand whose wrist sits on a person's
-///          pose wrist belongs to that person, and a person whose visible wrists are both elsewhere
-///          cannot own it (same rule as ../jetson/src/person_linker.cpp)
+///   pose   when body poses are known (2+ people in view), a hand whose wrist sits on the same-side
+///          wrist of a person's pose (left hand, left wrist) belongs to that person, and a person
+///          whose visible wrists are both elsewhere cannot own it. A pose whose nose is not on its
+///          own face is someone else's body and is ignored; when two poses claim the same hand,
+///          only a clearly closer one counts (same rules as ../jetson/src/person_linker.cpp)
 struct LinkPolicy {
     var maxReach: CGFloat = 5.0  // hand centre to face centre, in face widths (raised hands reach ~4.5; doubtful links were 5.3+)
     var handFaceRatio: CGFloat = 0.6  // typical hand size (wrist..middle knuckle) / face box width
@@ -30,6 +32,14 @@ struct LinkPolicy {
     var poseElsewhere: CGFloat = 2.5  // ... farther than this from every visible pose wrist: not that person's
     var poseBonus: CGFloat = 10  // cost lowered by this for a pose match (decides over the other rules)
     var posePenalty: CGFloat = 2  // one visible wrist elsewhere (the other unseen)
+    var poseNoseReach: CGFloat = 1.0  // pose nose farther than this many face heights from its face: someone else's pose
+    var poseClearlyCloser: CGFloat = 0.6  // two poses claim a hand: one counts only if this much closer
+}
+
+/// A body pose for one face, as the linker needs it.
+struct LinkPose {
+    let nose: CGPoint  // frame pixels
+    let wrists: [(point: CGPoint, visibility: Float)]  // [person's left, person's right], frame pixels
 }
 
 struct LinkFace {
@@ -63,16 +73,21 @@ final class PersonLinker {
     private var held: [Int: (gesture: String, since: TimeInterval)] = [:]  // per hand id
     private var addressing: [Int: (gesture: String, until: TimeInterval)] = [:]  // per face id
     private(set) var newEvents: [String] = []
-    private var poses: [Int: [(point: CGPoint, visibility: Float)]] = [:]  // per face id, this frame only
+    private var poses: [Int: LinkPose] = [:]  // per face id, accepted poses this frame only
+    private var poseIgnored: Set<Int> = []  // face ids whose pose was not on their face (logged once)
 
-    /// Hand wrist distance to the nearest visible pose wrist of a face, in hand sizes (nil if none).
-    func poseDistance(_ hand: LinkHand, _ faceID: Int) -> CGFloat? {
-        guard let ws = poses[faceID], hand.points.count == 21 else { return nil }
-        let w0 = hand.points[0]
-        let ds = ws.filter { $0.visibility >= policy.poseVisible }.map { hypot(w0.x - $0.point.x, w0.y - $0.point.y) }
-        guard let d = ds.min() else { return nil }
-        return d / max(Self.handSize(hand.points), 1)
+    /// Hand wrist distance to a face's pose wrists, in hand sizes: (same-side wrist or nil if not
+    /// visible, nearest visible wrist or nil if none).
+    func poseDistances(_ hand: LinkHand, _ faceID: Int) -> (same: CGFloat?, any: CGFloat?) {
+        guard let p = poses[faceID], p.wrists.count == 2, hand.points.count == 21 else { return (nil, nil) }
+        let w0 = hand.points[0], hs = max(Self.handSize(hand.points), 1)
+        let d = p.wrists.map { $0.visibility >= policy.poseVisible ? hypot(w0.x - $0.point.x, w0.y - $0.point.y) / hs : nil }
+        let same = hand.handedness == "Left" ? d[0] : d[1]
+        return (same, d.compactMap { $0 }.min())
     }
+
+    /// The same-side distance (what the rule uses), for the log.
+    func poseDistance(_ hand: LinkHand, _ faceID: Int) -> CGFloat? { poseDistances(hand, faceID).same }
 
     func reset() {
         owner.removeAll()
@@ -80,6 +95,7 @@ final class PersonLinker {
         facing.removeAll()
         held.removeAll()
         addressing.removeAll()
+        poseIgnored.removeAll()
     }
 
     /// Is this face turned to the camera? From YuNet's points: right eye, left eye, nose, mouth corners.
@@ -131,26 +147,41 @@ final class PersonLinker {
         if dy < -1.5 { c += pol.aboveHeadPenalty }  // more than 1.5 face widths above the face centre
         if owner[hand.id] == face.id { c -= pol.stickyBonus }
         // body pose: the strongest evidence when it is there
-        if let pd = poseDistance(hand, face.id) {
-            let seen = (poses[face.id] ?? []).filter { $0.visibility >= pol.poseVisible }.count
-            if pd <= pol.poseMatch {
-                c -= pol.poseBonus
-            } else if pd > pol.poseElsewhere && seen == 2 {
-                return nil  // both wrists seen, both elsewhere
-            } else if pd > pol.poseElsewhere {
+        let pd = poseDistances(hand, face.id)
+        if let any = pd.any, any > pol.poseElsewhere,
+           (poses[face.id]?.wrists ?? []).allSatisfy({ $0.visibility >= pol.poseVisible }) {
+            return nil  // both wrists seen, both elsewhere
+        }
+        if let same = pd.same {
+            if same <= pol.poseMatch {
+                // another pose claiming the same hand: only a clearly closer claim counts
+                let rival = poses.keys.filter { $0 != face.id }.compactMap { poseDistances(hand, $0).same }.filter { $0 <= pol.poseMatch }.min()
+                if rival.map({ same <= pol.poseClearlyCloser * $0 }) ?? true { c -= pol.poseBonus }
+            } else if same > pol.poseElsewhere {
                 c += pol.posePenalty
             }
         }
         return c
     }
 
-    /// `bodyPoses`: per face id, its body's wrists (only when computed this frame).
-    func update(faces: [LinkFace], hands: [LinkHand], now: TimeInterval,
-                bodyPoses: [Int: [(point: CGPoint, visibility: Float)]] = [:]) {
+    /// `bodyPoses`: per face id, its body pose (only when computed this frame).
+    func update(faces: [LinkFace], hands: [LinkHand], now: TimeInterval, bodyPoses: [Int: LinkPose] = [:]) {
         newEvents.removeAll()
-        poses = bodyPoses
         let pol = policy
         let visible = faces.filter(\.visible)
+
+        // a pose found from a crop around a face can latch onto another person in the crop
+        poses = [:]
+        for f in visible {
+            guard let p = bodyPoses[f.id] else { continue }
+            let off = hypot(p.nose.x - f.box.midX, p.nose.y - f.box.midY) / max(f.box.height, 1)
+            if off <= pol.poseNoseReach {
+                poses[f.id] = p
+                poseIgnored.remove(f.id)
+            } else if poseIgnored.insert(f.id).inserted {
+                newEvents.append(String(format: "pose for face #%d ignored: its nose is %.1f face heights from the face (someone else's body)", f.id, off))
+            }
+        }
 
         // facing, remembered per face between frames where its points are known
         for f in faces {
@@ -179,7 +210,8 @@ final class PersonLinker {
             guard let fid = newOwner[h.id], let f = visible.first(where: { $0.id == fid }) else { continue }
             let m = measure(h, f)  // printed so the rules can be tuned on real people
             var line = String(format: "hand #%d (%@) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness, fid, m.reach, m.ratio)
-            if let pd = poseDistance(h, fid) { line += String(format: ", pose wrist %.1f hand sizes away", pd) }
+            let claims = poses.keys.sorted().compactMap { id in poseDistance(h, id).map { String(format: "#%d %.1f", id, $0) } }
+            if !claims.isEmpty { line += ", pose wrist hand sizes away: " + claims.joined(separator: ", ") }
             newEvents.append(line + ")")
         }
         let prevOwner = owner

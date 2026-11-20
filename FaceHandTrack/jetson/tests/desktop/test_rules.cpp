@@ -115,24 +115,53 @@ int main() {
         check("rules alone: the farther person's hand goes to the nearer person (the bug)", o == std::map<int, int>{{1, 1}});
         PersonLinker P;
         std::vector<std::string> ev;
-        std::map<int, std::vector<PoseWrist>> poses = {
-            {1, {{{650, 560}, 0.9f}, {{760, 560}, 0.9f}}},   // A's hands are down by A's sides
-            {2, {{{590, 365}, 0.9f}, {{380, 420}, 0.6f}}}};  // B's right wrist is where the hand's wrist is
+        std::map<int, LinkPose> poses = {  // wrists: {person's left, person's right}
+            {1, {{700, 340}, {{{760, 560}, 0.9f}, {{650, 560}, 0.9f}}}},   // A's hands are down by A's sides
+            {2, {{420, 265}, {{{380, 420}, 0.6f}, {{590, 365}, 0.9f}}}}};  // B's right wrist is where the hand's wrist is
         P.update(fs, {h}, 0, ev, poses);
         check("with poses: the hand goes to the farther person whose wrist it is", P.owner() == std::map<int, int>{{1, 2}});
         bool logged = false;
         for (auto& e : ev) logged = logged || e.find("pose wrist") != std::string::npos;
         check("the log says the pose decided it", logged);
         PersonLinker Q;  // only one of A's wrists seen, elsewhere, and no pose for B: rules still decide, A pays a penalty
-        Q.update(fs, {h}, 0, ev, {{1, {{{650, 560}, 0.9f}, {{760, 560}, 0.1f}}}});
+        Q.update(fs, {h}, 0, ev, {{1, {{700, 340}, {{{760, 560}, 0.1f}, {{650, 560}, 0.9f}}}}});
         float ca, cb;
         Q.cost(h, fs[0], ca);
         Q.cost(h, fs[1], cb);
         check("one wrist of A seen elsewhere: A's cost goes up", ca > 0 && Q.owner().size() == 1);
         PersonLinker S;  // the near person's own hand still goes to them with poses on
         S.update(fs, {{2, "Right", hand_pts(640, 520, 100), ""}}, 0, ev,
-                 {{1, {{{640, 570}, 0.9f}, {{760, 560}, 0.9f}}}, {2, {{{400, 380}, 0.9f}, {{380, 420}, 0.6f}}}});
+                 {{1, {{700, 340}, {{{760, 560}, 0.9f}, {{640, 570}, 0.9f}}}}, {2, {{420, 265}, {{{380, 420}, 0.6f}, {{400, 380}, 0.9f}}}}});
         check("with poses: the near person's own hand stays theirs", S.owner() == std::map<int, int>{{2, 1}});
+
+        // Mac log 20 Nov: A's pose (from a big crop that also held B) put a wrist on B's hand, so both
+        // poses claimed it, the bonuses cancelled and the hand flipped between A and B every frame.
+        LinkHand hb{3, "Left", hand_pts(590, 330, 70), ""};  // B's left hand raised next to A's face (rules alone: A)
+        std::map<int, LinkPose> latched = {
+            {1, {{430, 270}, {{{590, 365}, 0.9f}, {{380, 420}, 0.9f}}}},  // A's "pose" is B's body: nose on B
+            {2, {{420, 265}, {{{590, 365}, 0.9f}, {{380, 420}, 0.9f}}}}};
+        PersonLinker N;
+        std::vector<std::string> nev;
+        N.update(fs, {hb}, 0, nev, latched);
+        check("a pose whose nose is on someone else's face is ignored: B's hand stays B's", N.owner() == std::map<int, int>{{3, 2}});
+        bool said = false;
+        for (auto& e : nev) said = said || e.find("pose for face #1 ignored") != std::string::npos;
+        check("the log says which pose was ignored", said);
+        std::map<int, LinkPose> sides = {  // A's RIGHT wrist is on the left hand, B's LEFT wrist is
+            {1, {{700, 340}, {{{760, 560}, 0.9f}, {{590, 365}, 0.9f}}}},
+            {2, {{420, 265}, {{{594, 362}, 0.9f}, {{380, 420}, 0.9f}}}}};
+        PersonLinker M;
+        M.update(fs, {hb}, 0, nev, sides);
+        check("a left hand is matched only with a pose's left wrist", M.owner() == std::map<int, int>{{3, 2}});
+        std::map<int, LinkPose> tie = {  // both poses' left wrists on the hand: neither gets the bonus
+            {1, {{700, 340}, {{{598, 365}, 0.9f}, {{650, 560}, 0.2f}}}},
+            {2, {{420, 265}, {{{582, 365}, 0.9f}, {{380, 420}, 0.2f}}}}};
+        PersonLinker T;
+        T.update(fs, {hb}, 0, nev, tie);
+        float c1, c2;
+        T.cost(hb, fs[0], c1);
+        T.cost(hb, fs[1], c2);
+        check("two poses claiming a hand equally: no pose bonus for either", c1 > -5 && c2 > -5);
     }
 
     // ---------- help ----------

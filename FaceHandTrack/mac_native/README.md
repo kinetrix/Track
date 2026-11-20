@@ -36,14 +36,14 @@ holds a gesture is marked as addressing it. No extra model, a few comparisons pe
 | side | a right hand is usually on the person's right of their face (follows the Mirror setting) |
 | one each | each person has at most one left and one right hand |
 | sticky | a hand keeps its person unless another fits clearly better |
-| pose | with 2+ people and hands in view, each person's body pose is found from a crop around their face; a hand whose wrist is within 1 hand size of a person's pose wrist is theirs (overrides the other rules), and a person whose two visible wrists are both more than 2.5 hand sizes away can't own it. Fixes a farther person's hand being given to the nearer person (one camera has no depth, and size alone couldn't tell) |
+| pose | with 2+ people and hands in view, each person's body pose is found from a crop around their face; a hand whose wrist is within 1 hand size of the same-side wrist of a person's pose (left hand, left wrist) is theirs (overrides the other rules), and a person whose two visible wrists are both more than 2.5 hand sizes away can't own it. A pose whose nose isn't on its own face (the crop around a near face also holds the people behind, and the model can latch onto one of them) is ignored, and when two poses claim the same hand only a clearly closer one counts. Fixes a farther person's hand being given to the nearer person (one camera has no depth, and size alone couldn't tell) |
 | facing | nose roughly between the eyes (YuNet's points) = turned to the camera |
 | addressing | facing + the same gesture held 0.5 s by that person's hand (restarts if the hand changes person); stays on 1 s after the gesture ends |
 
 The window draws each hand in its person's colour with a dashed line to their face and the
 label `#2 · Right: Thumbs up (1)` (`?` = no one). The person addressing the camera gets a yellow
 frame and a `talking: Thumbs up` banner. The console prints `hand #3 (Right) -> face #1 (reach 2.1,
-size 0.64, pose wrist 0.4 hand sizes away)` when a hand changes person (the numbers are for tuning the rules) and
+size 0.64, pose wrist hand sizes away: #1 0.4, #2 3.1)` when a hand changes person (the numbers are for tuning the rules) and
 `face #1 addressing: Thumbs up` when someone starts addressing it. With poses on, each person's arms are drawn in their colour. Rules and numbers:
 `PersonLinker.swift` (`LinkPolicy`).
 

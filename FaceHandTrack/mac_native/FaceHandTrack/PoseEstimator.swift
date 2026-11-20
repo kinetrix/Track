@@ -13,8 +13,6 @@ struct BodyPose {
     let points: [CGPoint]  // 33 + 6 helper points, frame pixels (MediaPipe order: 15/16 wrists, 11/12 shoulders, 13/14 elbows)
     let visibility: [Float]  // 0..1 per point
     let presence: Float  // the model's confidence that a body is there
-
-    var wrists: [(point: CGPoint, visibility: Float)] { [(points[15], visibility[15]), (points[16], visibility[16])] }
 }
 
 final class PoseEstimator {

@@ -259,7 +259,7 @@ final class Pipeline {
             linkHands.append(LinkHand(id: h.id, handedness: h.handedness, points: pts, gesture: h.gesture))
         }
         // body poses join hands to bodies, needed only to tell people apart: 2+ faces and some hands
-        var bodyPoses: [Int: [(point: CGPoint, visibility: Float)]] = [:]
+        var bodyPoses: [Int: LinkPose] = [:]
         var drawnPoses: [Int: [CGPoint?]] = [:]
         var poseMs = 0.0
         let visibleFaces = linkFaces.filter(\.visible)
@@ -268,7 +268,9 @@ final class Pipeline {
             withBGRA(pb) { img in
                 for f in visibleFaces {
                     guard let bp = try? pose.estimate(img, face: f.box, faceID: f.id), bp.presence >= 0.5 else { continue }
-                    bodyPoses[f.id] = bp.wrists
+                    // the frame is mirrored like a selfie: the model's left wrist is then the person's right
+                    let (l, r) = mirrored ? (16, 15) : (15, 16)
+                    bodyPoses[f.id] = LinkPose(nose: bp.points[0], wrists: [(bp.points[l], bp.visibility[l]), (bp.points[r], bp.visibility[r])])
                     drawnPoses[f.id] = [11, 13, 15, 12, 14, 16].map { j in
                         bp.visibility[j] >= 0.5 ? CGPoint(x: bp.points[j].x / W, y: bp.points[j].y / H) : nil
                     }

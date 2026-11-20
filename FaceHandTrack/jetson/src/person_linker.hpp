@@ -7,14 +7,17 @@
 //   side   a right hand is usually on the person's right of their face
 //   one    each person has at most one left and one right hand
 //   sticky a hand keeps its person unless another fits clearly better
-//   pose   when body poses are known (2+ people in view), a hand whose wrist sits on a person's
-//          pose wrist belongs to that person, and a person whose visible wrists are both elsewhere
-//          cannot own it: one camera has no depth, the body joins each hand to its person
+//   pose   when body poses are known (2+ people in view), a hand whose wrist sits on the same-side
+//          wrist of a person's pose (left hand, left wrist) belongs to that person, and a person
+//          whose visible wrists are both elsewhere cannot own it: one camera has no depth, the body
+//          joins each hand to its person. A pose whose nose is not on its own face is someone
+//          else's body and is ignored; when two poses claim a hand, only a clearly closer one counts
 #pragma once
 
 #include <opencv2/core.hpp>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,12 +38,19 @@ struct LinkPolicy {
     float pose_match = 1.0f;        // hand wrist within this many hand sizes of a pose wrist: that person's
     float pose_elsewhere = 2.5f;    // ... farther than this from every visible pose wrist: not that person's
     float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
-    float pose_penalty = 2.0f;      // one visible wrist elsewhere (the other unseen)
+    float pose_penalty = 2.0f;      // same-side wrist seen elsewhere
+    float pose_nose_reach = 1.0f;   // pose nose farther than this many face heights from its face: someone else's pose
+    float pose_clearly_closer = 0.6f;  // two poses claim a hand: one counts only if this much closer
 };
 
 struct PoseWrist {
     cv::Point2f point;              // frame pixels
     float visibility;               // 0..1
+};
+
+struct LinkPose {
+    cv::Point2f nose;               // frame pixels
+    std::vector<PoseWrist> wrists;  // {person's left, person's right}
 };
 
 struct LinkFace {
@@ -74,18 +84,21 @@ public:
 
     static bool yaw(const std::vector<cv::Point2f>& lm, float& out);
     bool cost(const LinkHand& h, const LinkFace& f, float& out) const;
-    // poses: per face id, its body's two wrists (only when computed this frame)
+    // poses: per face id, its body pose (only when computed this frame)
     void update(const std::vector<LinkFace>& faces, const std::vector<LinkHand>& hands, double now,
-                std::vector<std::string>& events, const std::map<int, std::vector<PoseWrist>>& poses = {});
-    // hand wrist distance to the nearest visible pose wrist of face, in hand sizes (-1 if none)
+                std::vector<std::string>& events, const std::map<int, LinkPose>& poses = {});
+    // hand wrist distance to the same-side pose wrist of face, in hand sizes (-1 if no pose or not visible)
     float pose_distance(const LinkHand& h, int face_id) const;
+    // ... to the nearest visible pose wrist (-1 if none)
+    float pose_distance_any(const LinkHand& h, int face_id) const;
     void reset();
 
     const std::map<int, int>& owner() const { return owner_; }  // hand id -> face id
     const std::map<int, PersonState>& people() const { return people_; }
 
 private:
-    std::map<int, std::vector<PoseWrist>> poses_;
+    std::map<int, LinkPose> poses_;   // accepted poses, this frame only
+    std::set<int> pose_ignored_;      // faces whose pose was not on their face (logged once)
     std::map<int, int> owner_;
     std::map<int, PersonState> people_;
     std::map<int, bool> facing_;
