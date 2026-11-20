@@ -12,8 +12,9 @@ import Foundation
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
 ///   pose   when body poses are known (hands in view), a hand whose wrist sits on the same-side
-///          wrist of a person's pose (left hand, left wrist) belongs to that person, and a person
-///          whose visible wrists are both elsewhere cannot own it. A pose whose nose is not on its
+///          wrist of a person's pose (left hand, left wrist) belongs to that person; otherwise the
+///          farther the person's nearest wrist, the higher the cost, and a person whose visible
+///          wrists are both very far cannot own it. A pose whose nose is not on its
 ///          own face is someone else's body and is ignored; when two poses claim the same hand,
 ///          only a clearly closer one counts (same rules as ../jetson/src/person_linker.cpp)
 struct LinkPolicy {
@@ -29,9 +30,10 @@ struct LinkPolicy {
     var lingerSeconds: TimeInterval = 1.0  // keep "addressing" this long after the gesture ends
     var poseVisible: Float = 0.5  // pose wrist visibility needed to count
     var poseMatch: CGFloat = 1.0  // hand wrist within this many hand sizes of a pose wrist: that person's
-    var poseElsewhere: CGFloat = 2.5  // ... farther than this from every visible pose wrist: not that person's
+    var poseWeight: CGFloat = 1.5  // otherwise cost per hand size from the person's wrist (a far wrist costs more) ...
+    var poseCap: CGFloat = 6  // ... up to this many; beyond it from both visible wrists: not that person's
+    var handednessSlack: CGFloat = 0.5  // the other wrist counts too, this much farther (Left/Right labels flip)
     var poseBonus: CGFloat = 10  // cost lowered by this for a pose match (decides over the other rules)
-    var posePenalty: CGFloat = 2  // one visible wrist elsewhere (the other unseen)
     var poseNoseReach: CGFloat = 1.0  // pose nose farther than this many face heights from its face: someone else's pose
     var poseClearlyCloser: CGFloat = 0.6  // two poses claim a hand: one counts only if this much closer
 }
@@ -147,19 +149,19 @@ final class PersonLinker {
         if dy < -1.5 { c += pol.aboveHeadPenalty }  // more than 1.5 face widths above the face centre
         if owner[hand.id] == face.id { c -= pol.stickyBonus }
         // body pose: the strongest evidence when it is there
+        // (20 Nov: a hard "both wrists elsewhere = not theirs" at 2.5 hand sizes excluded the friend,
+        // whose pose wrist was 2.6-3.3 away, and handed his hand to the only one left: the nearer person)
         let pd = poseDistances(hand, face.id)
-        if let any = pd.any, any > pol.poseElsewhere,
+        if let any = pd.any, any > pol.poseCap,
            (poses[face.id]?.wrists ?? []).allSatisfy({ $0.visibility >= pol.poseVisible }) {
-            return nil  // both wrists seen, both elsewhere
+            return nil  // both wrists seen, both far away
         }
-        if let same = pd.same {
-            if same <= pol.poseMatch {
-                // another pose claiming the same hand: only a clearly closer claim counts
-                let rival = poses.keys.filter { $0 != face.id }.compactMap { poseDistances(hand, $0).same }.filter { $0 <= pol.poseMatch }.min()
-                if rival.map({ same <= pol.poseClearlyCloser * $0 }) ?? true { c -= pol.poseBonus }
-            } else if same > pol.poseElsewhere {
-                c += pol.posePenalty
-            }
+        if let same = pd.same, same <= pol.poseMatch {
+            // another pose claiming the same hand: only a clearly closer claim counts
+            let rival = poses.keys.filter { $0 != face.id }.compactMap { poseDistances(hand, $0).same }.filter { $0 <= pol.poseMatch }.min()
+            if rival.map({ same <= pol.poseClearlyCloser * $0 }) ?? true { c -= pol.poseBonus }
+        } else if let d = [pd.same, pd.any.map { $0 + pol.handednessSlack }].compactMap({ $0 }).min() {
+            c += pol.poseWeight * min(d, pol.poseCap)
         }
         return c
     }

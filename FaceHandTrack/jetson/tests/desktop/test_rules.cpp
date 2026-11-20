@@ -162,6 +162,15 @@ int main() {
         T.cost(hb, fs[0], c1);
         T.cost(hb, fs[1], c2);
         check("two poses claiming a hand equally: no pose bonus for either", c1 > -5 && c2 > -5);
+
+        // Mac log 20 Nov, 72 s: the friend's pose wrists were 2.7 hand sizes off his hand (a noisy
+        // pose), the near person's 10.5. A hard cutoff at 2.5 ruled the friend out and the hand
+        // went to the near person; the graded cost keeps it with the friend.
+        LinkHand hf{4, "Right", hand_pts(420, 396, 45), ""};
+        PersonLinker G;
+        G.update(fs, {hf}, 0, nev, {{1, {{700, 340}, {{{900, 800}, 0.1f}, {{850, 790}, 0.9f}}}},
+                                    {2, {{420, 265}, {{{299, 418}, 0.9f}, {{541, 418}, 0.9f}}}}});
+        check("a noisy pose 2.7 hand sizes off doesn't hand the friend's hand to the near person", G.owner() == std::map<int, int>{{4, 2}});
     }
 
     // ---------- help ----------

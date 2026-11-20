@@ -71,22 +71,26 @@ bool PersonLinker::cost(const LinkHand& h, const LinkFace& f, float& out) const 
     auto it = owner_.find(h.id);
     if (it != owner_.end() && it->second == f.id) c -= p.sticky_bonus;
     // body pose: the strongest evidence when it is there
+    // (20 Nov: a hard "both wrists elsewhere = not theirs" at 2.5 hand sizes excluded the friend,
+    // whose pose wrist was 2.6-3.3 away, and handed his hand to the only one left: the nearer person)
     const float any = pose_distance_any(h, f.id);
-    if (any > p.pose_elsewhere) {
+    if (any > p.pose_cap) {
         int visible = 0;
         for (const PoseWrist& w : poses_.at(f.id).wrists) visible += w.visibility >= p.pose_visible;
-        if (visible == 2) return false;  // both wrists seen, both elsewhere
+        if (visible == 2) return false;  // both wrists seen, both far away
     }
     const float pd = pose_distance(h, f.id);
     if (pd >= 0 && pd <= p.pose_match) {
         float rival = -1;  // another pose claiming the same hand: only a clearly closer claim counts
-        for (const auto& [id, pose] : poses_) {
-            const float d = id == f.id ? -1 : pose_distance(h, id);
+        for (const auto& kv : poses_) {
+            const float d = kv.first == f.id ? -1 : pose_distance(h, kv.first);
             if (d >= 0 && d <= p.pose_match && (rival < 0 || d < rival)) rival = d;
         }
         if (rival < 0 || pd <= p.pose_clearly_closer * rival) c -= p.pose_bonus;
-    } else if (pd > p.pose_elsewhere) {
-        c += p.pose_penalty;
+    } else {
+        float d = pd;
+        if (any >= 0 && (d < 0 || any + p.handedness_slack < d)) d = any + p.handedness_slack;
+        if (d >= 0) c += p.pose_weight * std::min(d, p.pose_cap);
     }
     out = c;
     return true;

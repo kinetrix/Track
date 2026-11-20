@@ -8,8 +8,9 @@
 //   one    each person has at most one left and one right hand
 //   sticky a hand keeps its person unless another fits clearly better
 //   pose   when body poses are known (2+ people in view), a hand whose wrist sits on the same-side
-//          wrist of a person's pose (left hand, left wrist) belongs to that person, and a person
-//          whose visible wrists are both elsewhere cannot own it: one camera has no depth, the body
+//          wrist of a person's pose (left hand, left wrist) belongs to that person; otherwise the
+//          farther the person's nearest wrist, the higher the cost, and a person whose visible
+//          wrists are both very far cannot own it: one camera has no depth, the body
 //          joins each hand to its person. A pose whose nose is not on its own face is someone
 //          else's body and is ignored; when two poses claim a hand, only a clearly closer one counts
 #pragma once
@@ -36,9 +37,10 @@ struct LinkPolicy {
     double linger_seconds = 1.0;    // keep "addressing" this long after the gesture ends
     float pose_visible = 0.5f;      // pose wrist visibility needed to count
     float pose_match = 1.0f;        // hand wrist within this many hand sizes of a pose wrist: that person's
-    float pose_elsewhere = 2.5f;    // ... farther than this from every visible pose wrist: not that person's
+    float pose_weight = 1.5f;       // otherwise cost per hand size from the person's wrist (a far wrist costs more) ...
+    float pose_cap = 6.0f;          // ... up to this many; beyond it from both visible wrists: not that person's
+    float handedness_slack = 0.5f;  // the other wrist counts too, this much farther (Left/Right labels flip)
     float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
-    float pose_penalty = 2.0f;      // same-side wrist seen elsewhere
     float pose_nose_reach = 1.0f;   // pose nose farther than this many face heights from its face: someone else's pose
     float pose_clearly_closer = 0.6f;  // two poses claim a hand: one counts only if this much closer
 };
