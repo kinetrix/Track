@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "camera.hpp"
+#include "depth.hpp"
 #include "face_pipeline.hpp"
 #include "fast_face_tracker.hpp"
 #include "attention_tracker.hpp"
@@ -41,7 +42,11 @@ std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop = true; }
 
 struct Args {
+#ifdef HAVE_REALSENSE
+    std::string camera = "realsense";  // head camera colour + depth (stop Unitree's videohub first)
+#else
     std::string camera = "/dev/video4";  // head camera, direct (stop Unitree's videohub first)
+#endif
     int width = 1280, height = 720, fps = 30;
     std::string engines = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/facehandtrack/engines";
     int port = 8090;
@@ -58,8 +63,8 @@ struct Args {
 
 void usage() {
     std::printf(
-        "usage: facehandtrack [--camera /dev/video4|videohub|<gstreamer pipeline>]\n"
-        "                     [--width 1280] [--height 720] [--fps 30]  (only for /dev/videoN)\n"
+        "usage: facehandtrack [--camera realsense|/dev/video4|videohub|<gstreamer pipeline>]\n"
+        "                     [--width 1280] [--height 720] [--fps 30]  (realsense, /dev/videoN)\n"
         "                     [--engines ~/facehandtrack/engines] [--port 8090] [--stream-fps 15]\n"
         "                     [--jpeg-quality 80] [--max-faces 3] [--max-hands 2 x faces] [--no-faces] [--no-hands]\n"
         "                     [--tracker fast|edgetam] [--no-reid] [--attn fp16|fp32] [--compare-attn]\n"
@@ -268,6 +273,9 @@ int main(int argc, char** argv) {
 
     const auto t_start = std::chrono::steady_clock::now();
     cv::Mat frame;
+    DepthFrame depth;
+    std::vector<LinkFace> last_lfaces;  // for the status line: distances
+    std::vector<LinkHand> last_lhands;
     uint64_t id = 0;
     auto t_report = t_start;
     auto t_stream = t_start;
@@ -276,7 +284,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> face_events, hand_events;
 
     while (!g_stop) {
-        id = cam.wait_newer(id, frame);
+        id = cam.wait_newer(id, frame, &depth);
         if (id == 0) break;
         const auto t0 = std::chrono::steady_clock::now();
         const double now = std::chrono::duration<double>(t0 - t_start).count();
@@ -305,15 +313,19 @@ int main(int argc, char** argv) {
         std::vector<FaceOut> fouts = faces ? faces->faces() : std::vector<FaceOut>();
         const std::vector<HandResult> houts = hands ? hands->hands() : std::vector<HandResult>();
         std::vector<LinkFace> lfaces;
-        for (const FaceOut& f : fouts) lfaces.push_back({f.id, f.box, f.landmarks, f.visible});
+        for (const FaceOut& f : fouts)
+            lfaces.push_back({f.id, f.box, f.landmarks, f.visible, f.visible ? face_depth(depth, f.box) : -1.f});
         std::vector<LinkHand> lhands;
         for (const HandResult& h : houts) {
             LinkHand lh{h.id, h.handedness, {}, h.gesture};
             for (const auto& q : h.landmarks) lh.points.emplace_back(q.x, q.y);
+            lh.depth = hand_depth(depth, lh.points);
             lhands.push_back(lh);
         }
         std::vector<std::string> rule_events;
         linker.update(lfaces, lhands, now, rule_events);
+        last_lfaces = lfaces;
+        last_lhands = lhands;
         std::vector<HelpFace> hfaces;
         std::vector<AttentionFace> afaces;
         for (const FaceOut& f : fouts) {
@@ -422,6 +434,13 @@ int main(int argc, char** argv) {
                                 h.handedness.c_str(), h.gesture.empty() ? "-" : h.gesture.c_str());
                 }
                 hands->reset_timings();
+            }
+            if (cam.has_depth()) {  // distances from the camera, latest frame
+                std::printf(" | depth");
+                for (const LinkFace& f : last_lfaces)
+                    if (f.visible) std::printf(f.depth > 0 ? " face #%d %.2f m" : " face #%d ?", f.id, f.depth);
+                for (const LinkHand& h : last_lhands)
+                    std::printf(h.depth > 0 ? " hand #%d %.2f m" : " hand #%d ?", h.id, h.depth);
             }
             for (const auto& [fid, st] : scene.people)
                 if (!st.addressing.empty()) std::printf(" | #%d addressing: %s", fid, st.addressing.c_str());

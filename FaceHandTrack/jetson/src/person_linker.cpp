@@ -70,6 +70,12 @@ bool PersonLinker::cost(const LinkHand& h, const LinkFace& f, float& out) const 
     if (dy < -1.5f) c += p.above_head_penalty;
     auto it = owner_.find(h.id);
     if (it != owner_.end() && it->second == f.id) c -= p.sticky_bonus;
+    // depth: one camera can't tell a hand a metre behind someone from theirs, the depth stream can
+    if (h.depth > 0 && f.depth > 0) {
+        const float dz = h.depth - f.depth;  // < 0: hand nearer the camera than the face
+        if (dz < -p.depth_front || dz > p.depth_behind) return false;
+        c += p.depth_weight * std::fabs(dz);
+    }
     // body pose: the strongest evidence when it is there
     // (20 Nov: a hard "both wrists elsewhere = not theirs" at 2.5 hand sizes excluded the friend,
     // whose pose wrist was 2.6-3.3 away, and handed his hand to the only one left: the nearer person)
@@ -163,6 +169,8 @@ void PersonLinker::update(const std::vector<LinkFace>& faces, const std::vector<
                 int n = std::snprintf(s, sizeof(s), "hand #%d (%s) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness.c_str(),
                               f->id, std::hypot(hc.x - (f->box.x + f->box.width / 2), hc.y - (f->box.y + f->box.height / 2)) / fw,
                               hand_size(h.points) / fw);
+                if (h.depth > 0 && f->depth > 0)
+                    n += std::snprintf(s + n, sizeof(s) - n, ", depth hand %.2f m face %.2f m", h.depth, f->depth);
                 const char* sep = ", pose wrist hand sizes away: ";
                 for (const auto& [id, pose] : poses_) {
                     const float pd = pose_distance(h, id);

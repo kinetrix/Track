@@ -13,6 +13,8 @@
 //          wrists are both very far cannot own it: one camera has no depth, the body
 //          joins each hand to its person. A pose whose nose is not on its own face is someone
 //          else's body and is ignored; when two poses claim a hand, only a clearly closer one counts
+//   depth  with the RealSense depth stream (robot only for now), a hand can only belong to a person
+//          whose face is at about the same distance: hands reach forward, not a metre backward
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -43,6 +45,9 @@ struct LinkPolicy {
     float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
     float pose_nose_reach = 1.0f;   // pose nose farther than this many face heights from its face: someone else's pose
     float pose_clearly_closer = 0.6f;  // two poses claim a hand: one counts only if this much closer
+    float depth_front = 0.9f;       // a hand at most this many metres nearer the camera than its face ...
+    float depth_behind = 0.35f;     // ... and at most this many metres farther
+    float depth_weight = 2.0f;      // within that, cost per metre of depth difference
 };
 
 struct PoseWrist {
@@ -60,6 +65,7 @@ struct LinkFace {
     cv::Rect2f box;                     // frame pixels
     std::vector<cv::Point2f> landmarks; // 5 YuNet points (empty if unknown this frame)
     bool visible;
+    float depth = -1;                   // metres from the camera, -1 unknown
 };
 
 struct LinkHand {
@@ -67,6 +73,7 @@ struct LinkHand {
     std::string handedness;             // the person's real hand: "Left" / "Right"
     std::vector<cv::Point2f> points;    // 21 landmarks, frame pixels
     std::string gesture;                // stable gesture, "" = none
+    float depth = -1;                   // metres from the camera, -1 unknown
 };
 
 struct PersonState {

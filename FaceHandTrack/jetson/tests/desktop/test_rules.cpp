@@ -173,6 +173,28 @@ int main() {
         check("a noisy pose 2.7 hand sizes off doesn't hand the friend's hand to the near person", G.owner() == std::map<int, int>{{4, 2}});
     }
 
+    // ---------- depth (RealSense on the robot): the friend a metre behind ----------
+    {
+        std::vector<LinkFace> fs = {face(1, 700, 330, 160), face(2, 420, 260, 80)};
+        fs[0].depth = 1.0f;  // you
+        fs[1].depth = 2.0f;  // the friend behind
+        LinkHand behind{1, "Right", hand_pts(590, 330, 70), ""};  // raised next to your face, but at his distance
+        behind.depth = 2.05f;
+        PersonLinker D;
+        check("depth: a hand a metre behind you goes to the friend", link(D, fs, {behind}) == std::map<int, int>{{1, 2}});
+        LinkHand mine{2, "Right", hand_pts(640, 520, 100), ""};  // your hand reaching toward the robot
+        mine.depth = 0.5f;
+        PersonLinker E;
+        check("depth: your hand reaching forward stays yours", link(E, fs, {mine}) == std::map<int, int>{{2, 1}});
+        LinkHand unknown{3, "Right", hand_pts(590, 330, 70), ""};  // no depth reading: the other rules decide
+        PersonLinker U;
+        check("depth unknown: the other rules decide as before", link(U, fs, {unknown}) == std::map<int, int>{{3, 1}});
+        LinkHand nowhere{4, "Right", hand_pts(590, 330, 70), ""};  // at a distance no face is at: no one's
+        nowhere.depth = 3.5f;
+        PersonLinker W;
+        check("depth: a hand at no face's distance is no one's", link(W, fs, {nowhere}).empty());
+    }
+
     // ---------- help ----------
     const std::array<bool, 5> TUCK{false, true, true, true, true}, FIST{false, false, false, false, false},
         PALM{true, true, true, true, true};

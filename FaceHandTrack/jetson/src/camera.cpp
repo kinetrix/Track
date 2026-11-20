@@ -9,7 +9,23 @@
 #include <cstdio>
 #include <cstdlib>
 
+#ifdef HAVE_REALSENSE
+#include <librealsense2/rs.hpp>
+#include "depth_impl.hpp"
+#endif
+
 namespace fht {
+
+#ifdef HAVE_REALSENSE
+struct Camera::RealSense {
+    rs2::pipeline pipe;
+    float scale = 0.001f;
+    rs2_intrinsics depth_intrin{}, color_intrin{};
+    rs2_extrinsics color_to_depth{}, depth_to_color{};
+};
+#else
+struct Camera::RealSense {};
+#endif
 
 // The RealSense colour camera's auto exposure may lengthen each frame in dim light, which drops
 // the frame rate (15-30 fps on the robot) and blurs moving hands. Turning off "exposure priority"
@@ -37,6 +53,45 @@ static const char* kVideohubPipeline =
     "videoconvert ! video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false";
 
 Camera::Camera(const std::string& device, int width, int height, int fps) {
+    if (device == "realsense") {
+#ifdef HAVE_REALSENSE
+        rs_ = std::make_unique<RealSense>();
+        try {
+            rs2::config cfg;
+            cfg.enable_stream(RS2_STREAM_COLOR, width, height, RS2_FORMAT_BGR8, fps);
+            cfg.enable_stream(RS2_STREAM_DEPTH, 848, 480, RS2_FORMAT_Z16, fps);  // the D435i's sharpest depth mode
+            rs2::pipeline_profile prof = rs_->pipe.start(cfg);
+            for (rs2::sensor s : prof.get_device().query_sensors()) {
+                try {  // keep the frame rate fixed in dim light (as for /dev/videoN)
+                    if (s.supports(RS2_OPTION_AUTO_EXPOSURE_PRIORITY)) s.set_option(RS2_OPTION_AUTO_EXPOSURE_PRIORITY, 0.f);
+                } catch (const rs2::error&) {
+                }
+                if (auto ds = s.as<rs2::depth_sensor>()) rs_->scale = ds.get_depth_scale();
+            }
+            auto dp = prof.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+            auto cp = prof.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+            rs_->depth_intrin = dp.get_intrinsics();
+            rs_->color_intrin = cp.get_intrinsics();
+            rs_->color_to_depth = cp.get_extrinsics_to(dp);
+            rs_->depth_to_color = dp.get_extrinsics_to(cp);
+            width_ = rs_->color_intrin.width;
+            height_ = rs_->color_intrin.height;
+        } catch (const rs2::error& e) {
+            std::fprintf(stderr,
+                         "[camera] realsense: %s\n"
+                         "  Unitree's videohub holds the head camera: sudo pkill -f videohub_pc4\n",
+                         e.what());
+            std::exit(1);
+        }
+        std::printf("[camera] realsense: colour %dx%d + depth 848x480 @ %d fps (depth unit %.4f m)\n", width_,
+                    height_, fps, rs_->scale);
+        thread_ = std::thread(&Camera::loop_realsense, this);
+        return;
+#else
+        std::fprintf(stderr, "[camera] built without librealsense: --camera realsense is not available\n");
+        std::exit(1);
+#endif
+    }
     bool ok = false;
     std::string what = device;
     if (device.rfind("/dev/video", 0) == 0) {
@@ -115,11 +170,61 @@ void Camera::loop() {
     cv_.notify_all();
 }
 
-uint64_t Camera::wait_newer(uint64_t last_id, cv::Mat& out) {
+void Camera::loop_realsense() {
+#ifdef HAVE_REALSENSE
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+    int frames = 0;
+    while (running_) {
+        rs2::frameset fs;
+        try {
+            if (!rs_->pipe.try_wait_for_frames(&fs, 2000)) {
+                std::fprintf(stderr, "[camera] realsense: no frames for 2 s\n");
+                break;
+            }
+        } catch (const rs2::error& e) {
+            std::fprintf(stderr, "[camera] realsense: %s\n", e.what());
+            break;
+        }
+        rs2::video_frame c = fs.get_color_frame();
+        rs2::depth_frame z = fs.get_depth_frame();
+        if (!c) continue;
+        auto impl = std::make_shared<DepthFrame::Impl>();
+        if (z) {
+            impl->z16 = cv::Mat(z.get_height(), z.get_width(), CV_16U, const_cast<void*>(z.get_data())).clone();
+            impl->scale = rs_->scale;
+            impl->depth_intrin = rs_->depth_intrin;
+            impl->color_intrin = rs_->color_intrin;
+            impl->color_to_depth = rs_->color_to_depth;
+            impl->depth_to_color = rs_->depth_to_color;
+        }
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            cv::Mat(c.get_height(), c.get_width(), CV_8UC3, const_cast<void*>(c.get_data())).copyTo(latest_);
+            latest_depth_.impl = z ? std::shared_ptr<const DepthFrame::Impl>(impl) : nullptr;
+            ++latest_id_;
+        }
+        cv_.notify_all();
+        ++frames;
+        const double dt = std::chrono::duration<double>(clock::now() - t0).count();
+        if (dt >= 1.0) {
+            capture_fps_ = frames / dt;
+            frames = 0;
+            t0 = clock::now();
+        }
+    }
+    rs_->pipe.stop();
+#endif
+    running_ = false;
+    cv_.notify_all();
+}
+
+uint64_t Camera::wait_newer(uint64_t last_id, cv::Mat& out, DepthFrame* depth) {
     std::unique_lock<std::mutex> lk(m_);
     cv_.wait(lk, [&] { return latest_id_ > last_id || !running_; });
     if (latest_id_ <= last_id) return 0;
     latest_.copyTo(out);
+    if (depth) *depth = latest_depth_;
     return latest_id_;
 }
 
