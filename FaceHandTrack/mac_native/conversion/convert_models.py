@@ -8,6 +8,9 @@ Produces (ML Programs, fp16, macOS 14+):
     PalmDetector.mlpackage   image (RGB, 192x192, 0..1)     -> boxes (1, 2016, 18), scores (1, 2016, 1)
     HandLandmarks.mlpackage  image (RGB, 224x224, 0..1)     -> landmarks (1, 63), presence (1, 1),
                                                                handedness (1, 1), world (1, 63)
+    Pose.mlpackage           image (RGB, 256x256, 0..1)     -> landmarks (1, 195) = 39 x (x, y, z, visibility,
+                                                               presence) in crop pixels, presence (1, 1)
+                             (body crop around a face; OpenCV Zoo pose_estimation_mediapipe_2023mar, Apache-2.0)
     SFace.mlpackage          image (RGB, 112x112, 0..255)   -> embedding (1, 128) face fingerprint
                              (aligned face crop; OpenCV Zoo face_recognition_sface_2021dec, Apache-2.0)
 Images are CVPixelBuffer inputs, so the app hands camera-format (BGRA) buffers
@@ -35,6 +38,24 @@ class NCHWtoNHWC(torch.nn.Module):
 
     def forward(self, x):
         return self.net(x.permute(0, 2, 3, 1))
+
+
+class PoseNHWC(torch.nn.Module):
+    """MediaPipe pose landmark model (input NHWC RGB 0..1) for a Core ML NCHW image input; keeps only
+    the landmarks and presence outputs (drops the segmentation mask and heatmaps)."""
+
+    def __init__(self, path):
+        super().__init__()
+        import onnx
+        import onnx.utils
+        from onnx2torch import convert as onnx_to_torch
+        pruned = path + ".landmarks.onnx"
+        onnx.utils.extract_model(path, pruned, ["input_1"], ["Identity", "Identity_1"])
+        self.net = onnx_to_torch(onnx.load(pruned))
+
+    def forward(self, x):
+        lm, presence = self.net(x.permute(0, 2, 3, 1))
+        return lm, presence
 
 
 def convert(module, example, image, outputs, out_path, description, meta=None):
@@ -77,6 +98,12 @@ def main():
             ct.ImageType(name="image", shape=(1, 3, 224, 224), scale=1 / 255.0, color_layout=ct.colorlayout.RGB),
             ["landmarks", "presence", "handedness", "world"], dst("HandLandmarks.mlpackage"),
             "MediaPipe hand landmarks (Google, Apache-2.0, via OpenCV Zoo 2023feb)")
+
+    pose = PoseNHWC(src("pose_estimation_mediapipe_2023mar.onnx"))
+    convert(pose, torch.rand(1, 3, 256, 256),
+            ct.ImageType(name="image", shape=(1, 3, 256, 256), scale=1 / 255.0, color_layout=ct.colorlayout.RGB),
+            ["landmarks", "presence"], dst("Pose.mlpackage"),
+            "MediaPipe pose (OpenCV Zoo pose_estimation_mediapipe_2023mar, Apache-2.0): 33 body points + 6 helpers")
 
     sface = load_onnx_as_torch(src("face_recognition_sface_2021dec.onnx"))
     convert(sface, torch.rand(1, 3, 112, 112) * 255,

@@ -42,6 +42,7 @@ struct PipelineStats {
     var encodeMs: Double = 0
     var perFaceMs: Double = 0
     var embedMs: Double = 0  // SFace fingerprints this frame (fast tracker)
+    var poseMs: Double = 0  // body poses (only while 2+ people and hands are in view)
     var palmMs: Double = 0
     var landmarksMs: Double = 0
     var totalMs: Double = 0  // moving average
@@ -58,6 +59,8 @@ struct FrameOutput {
     var size: CGSize
     var alerts: [HelpAlert] = []  // unacknowledged help requests
     var attention: AttentionTarget? = nil  // who the robot should turn to, and how far
+    var helpPending = false  // one Signal for Help seen, waiting for the second
+    var poses: [Int: [CGPoint?]] = [:]  // per face id: shoulders, elbows, wrists (normalised; nil = not visible)
 }
 
 /// Owns the models and runs one frame at a time on a private queue. Frames that arrive
@@ -79,6 +82,7 @@ final class Pipeline {
     private let embedder: FaceEmbedder
     private let linker = PersonLinker()
     private let help = HelpDetector()
+    private let pose: PoseEstimator
     private let attention = AttentionTracker()
     private let handTracker: HandTracker
     private var smoothers: [Int: GestureSmoother] = [:]
@@ -127,6 +131,7 @@ final class Pipeline {
         tam = try EdgeTAM(computeUnits: .cpuAndNeuralEngine)
         handTracker = try HandTracker(palmUnits: .cpuAndNeuralEngine, landmarkUnits: .cpuAndNeuralEngine)
         embedder = try FaceEmbedder(computeUnits: .cpuAndNeuralEngine)
+        pose = try PoseEstimator(computeUnits: .cpuAndNeuralEngine)
         handTracker.policy.maxHands = 2 * fastFaces.policy.maxTracks  // up to 2 hands per person
         fastFaces.known = KnownFaces.load()
     }
@@ -253,7 +258,25 @@ final class Pipeline {
             let pts = h.landmarks.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
             linkHands.append(LinkHand(id: h.id, handedness: h.handedness, points: pts, gesture: h.gesture))
         }
-        linker.update(faces: linkFaces, hands: linkHands, now: now)
+        // body poses join hands to bodies, needed only to tell people apart: 2+ faces and some hands
+        var bodyPoses: [Int: [(point: CGPoint, visibility: Float)]] = [:]
+        var drawnPoses: [Int: [CGPoint?]] = [:]
+        var poseMs = 0.0
+        let visibleFaces = linkFaces.filter(\.visible)
+        if visibleFaces.count >= 2 && !linkHands.isEmpty {
+            let t = CFAbsoluteTimeGetCurrent()
+            withBGRA(pb) { img in
+                for f in visibleFaces {
+                    guard let bp = try? pose.estimate(img, face: f.box, faceID: f.id), bp.presence >= 0.5 else { continue }
+                    bodyPoses[f.id] = bp.wrists
+                    drawnPoses[f.id] = [11, 13, 15, 12, 14, 16].map { j in
+                        bp.visibility[j] >= 0.5 ? CGPoint(x: bp.points[j].x / W, y: bp.points[j].y / H) : nil
+                    }
+                }
+            }
+            poseMs = (CFAbsoluteTimeGetCurrent() - t) * 1000
+        }
+        linker.update(faces: linkFaces, hands: linkHands, now: now, bodyPoses: bodyPoses)
         for i in hands.indices { hands[i].owner = linker.owner[hands[i].id] }
         for i in faces.indices {
             let st = linker.people[faces[i].id]
@@ -270,9 +293,11 @@ final class Pipeline {
                                       wrist: pts.first ?? c, size: PersonLinker.handSize(pts)))
         }
         var helpFaces: [HelpFace] = []
-        for (f, lf) in zip(faces, linkFaces) where f.visible { helpFaces.append(HelpFace(id: f.id, box: lf.box, name: f.name)) }
+        for (f, lf) in zip(faces, linkFaces) where f.visible {
+            helpFaces.append(HelpFace(id: f.id, box: lf.box, name: f.name, facing: f.facing))
+        }
         help.update(faces: helpFaces, hands: helpHands, now: now)
-        var helpEvents: [String] = []
+        var helpEvents = help.newEvents
         for a in help.newAlerts { helpEvents.append("HELP REQUESTED: \(a.reason) from \(a.who)") }
 
         // waving to call the robot, and where it should turn
@@ -299,6 +324,7 @@ final class Pipeline {
         if encoded { stats.encodeMs = ema(stats.encodeMs, encMs) }
         if !faces.isEmpty && mode == .edgetam { stats.perFaceMs = ema(stats.perFaceMs, faceMs / Double(faces.count)) }
         if mode == .fast { stats.embedMs = ema(stats.embedMs, embMs) }
+        stats.poseMs = ema(stats.poseMs, poseMs)
         let ht = handTracker.timings
         if let p = ht["palm"] { stats.palmMs = ema(stats.palmMs, p) }
         if let l = ht["landmarks"] { stats.landmarksMs = ema(stats.landmarksMs, l) }
@@ -313,8 +339,8 @@ final class Pipeline {
         if handEventLog.count > 3 { handEventLog.removeFirst(handEventLog.count - 3) }
         stats.events = Array(lastEvents.suffix(3)) + handEventLog
         if frameIndex % 30 == 0 {  // periodic line for remote profiling
-            let head = String(format: "[FaceHandTrack] %.1f fps | faces %ld hands %ld | detect %.1f embed %.1f encode %.1f per-face %.1f palm %.1f landmarks %.1f total %.1f ms",
-                              stats.fps, stats.faces, stats.hands, stats.detectMs, stats.embedMs, stats.encodeMs, stats.perFaceMs,
+            let head = String(format: "[FaceHandTrack] %.1f fps | faces %ld hands %ld | detect %.1f embed %.1f pose %.1f encode %.1f per-face %.1f palm %.1f landmarks %.1f total %.1f ms",
+                              stats.fps, stats.faces, stats.hands, stats.detectMs, stats.embedMs, stats.poseMs, stats.encodeMs, stats.perFaceMs,
                               stats.palmMs, stats.landmarksMs, stats.totalMs)
             var handText: [String] = []
             for h in hands {
@@ -326,7 +352,8 @@ final class Pipeline {
             let att = attention.target.map { " | robot -> #\($0.faceID) (\($0.reason)): \($0.turnText)" } ?? ""
             print(head + " | " + handText.joined(separator: ", ") + talk + att + (mode == .fast ? fastFaces.summary() : ""))
         }
-        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size, alerts: help.alerts, attention: attention.target)
+        return FrameOutput(faces: faces, hands: hands, stats: stats, size: size, alerts: help.alerts, attention: attention.target,
+                           helpPending: help.pending && help.alerts.isEmpty, poses: drawnPoses)
     }
 
     // MARK: - fast face path (as in ../jetson)

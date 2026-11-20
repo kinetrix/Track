@@ -99,7 +99,9 @@ void HelpDetector::update(const std::vector<HelpFace>& faces, const std::vector<
             if (is_closed && t.last - t.since >= p.tucked_hold && now - t.last <= p.fold_within && still(t.at)) {
                 tucked_.erase(it);
                 auto f = face_by_id.find(h.owner);
-                signal(h.owner, h.id, f == face_by_id.end() ? nullptr : f->second, now, events);
+                const HelpFace* face = f == face_by_id.end() ? nullptr : f->second;
+                if (face && face->facing == 0) continue;  // a signal is made toward the robot
+                signal(h.owner, h.id, face, now, events);
             } else if (now - t.last > p.fold_within) {
                 tucked_.erase(it);
             }

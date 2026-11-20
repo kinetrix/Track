@@ -12,15 +12,15 @@ caregiver rules (same as the Mac app, `../mac_native`): whose hand is whose, who
 the robot, help requests, waving to call the robot and where it should turn → a browser page with
 the video, help alerts (Acknowledge button) and name saving. The older EdgeTAM face tracker is
 still there (`--tracker edgetam`, ~20-25 ms per face, so too slow for 3 faces at 30 fps).
-Next: ROS 2 Foxy messages, turning toward the person, depth check for whose hand.
+Next: pose model on the robot (TensorRT, as on the Mac) for whose hand, ROS 2 Foxy messages, turning toward the person.
 
 ## Caregiver rules (no model)
 
 | Rule | Robot version |
 |---|---|
-| whose hand | nearest face within 5 face widths, hand ≈ 0.6 × face width in size, right hand on the person's right (camera not mirrored), one left + one right per person, sticky |
+| whose hand | nearest face within 5 face widths, hand ≈ 0.6 × face width in size, right hand on the person's right (camera not mirrored), one left + one right per person, sticky; **pose rule** ready (`PersonLinker::update(..., poses)`: hand wrist on a person's pose wrist = theirs, both visible wrists far away = not theirs) but the robot doesn't run the pose model yet, so a farther person's hand can still go to the nearer person |
 | addressing | facing the camera (YuNet points) + the same gesture held 0.5 s by that person's hand |
-| help | Signal for Help (thumb-tucked palm, then a fist, wrist still) **twice within 6 s** (once was too easy to trigger by relaxing a hand: 12 alerts in 7 min on the Mac), or both hands open above the chin 2 s; the page shows "give it once more" after the first |
+| help | Signal for Help (thumb-tucked palm, then a fist, wrist still) **twice within 6 s** (once was too easy to trigger by relaxing a hand: 12 alerts in 7 min on the Mac), or both hands open above the chin 2 s; the page shows "give it once more" after the first; ignored from a person turned away from the camera |
 | wave | open hand, 3 side-to-side swings within 2 s, **measured relative to the person's face** so the robot turning doesn't look like a wave |
 | attention / turn | the last person who waved (or started addressing it); horizontal / vertical angle from the 69° camera, robot's left / right |
 | names | page: type a name, Save face (the person talking, else the largest face); kept in `~/facehandtrack/known_faces.txt` |

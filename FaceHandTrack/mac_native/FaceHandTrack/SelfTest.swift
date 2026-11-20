@@ -165,7 +165,7 @@ enum SelfTest {
     static func benchmark(out: String) throws {
         let models: [(String, String?)] = [("YuNet", nil), ("SFace", nil), ("EdgeTAMImageEncoder", nil), ("EdgeTAMMemoryAttention", nil),
                                            ("EdgeTAMMaskDecoder", "track"), ("EdgeTAMMemoryEncoder", nil),
-                                           ("PalmDetector", nil), ("HandLandmarks", nil)]
+                                           ("PalmDetector", nil), ("HandLandmarks", nil), ("Pose", nil)]
         let units: [(String, MLComputeUnits)] = [("cpu", .cpuOnly), ("gpu", .cpuAndGPU), ("ane", .cpuAndNeuralEngine), ("all", .all)]
         var result: [String: [String: Double]] = [:]
         for (name, function) in models {

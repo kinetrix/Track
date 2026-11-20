@@ -318,8 +318,8 @@ int main(int argc, char** argv) {
         std::vector<AttentionFace> afaces;
         for (const FaceOut& f : fouts) {
             if (!f.visible) continue;
-            hfaces.push_back({f.id, f.box, f.name});
             auto st = linker.people().find(f.id);
+            hfaces.push_back({f.id, f.box, f.name, st != linker.people().end() ? st->second.facing : -1});
             afaces.push_back({f.id, f.box, st != linker.people().end() && !st->second.addressing.empty()});
         }
         std::vector<HelpHand> hhands;

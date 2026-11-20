@@ -7,6 +7,9 @@
 //   side   a right hand is usually on the person's right of their face
 //   one    each person has at most one left and one right hand
 //   sticky a hand keeps its person unless another fits clearly better
+//   pose   when body poses are known (2+ people in view), a hand whose wrist sits on a person's
+//          pose wrist belongs to that person, and a person whose visible wrists are both elsewhere
+//          cannot own it: one camera has no depth, the body joins each hand to its person
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -28,6 +31,16 @@ struct LinkPolicy {
     float max_yaw = 0.35f;          // nose offset from the eye midpoint / eye distance: below = facing
     double hold_seconds = 0.5;      // a gesture held this long while facing = addressing
     double linger_seconds = 1.0;    // keep "addressing" this long after the gesture ends
+    float pose_visible = 0.5f;      // pose wrist visibility needed to count
+    float pose_match = 1.0f;        // hand wrist within this many hand sizes of a pose wrist: that person's
+    float pose_elsewhere = 2.5f;    // ... farther than this from every visible pose wrist: not that person's
+    float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
+    float pose_penalty = 2.0f;      // one visible wrist elsewhere (the other unseen)
+};
+
+struct PoseWrist {
+    cv::Point2f point;              // frame pixels
+    float visibility;               // 0..1
 };
 
 struct LinkFace {
@@ -61,14 +74,18 @@ public:
 
     static bool yaw(const std::vector<cv::Point2f>& lm, float& out);
     bool cost(const LinkHand& h, const LinkFace& f, float& out) const;
+    // poses: per face id, its body's two wrists (only when computed this frame)
     void update(const std::vector<LinkFace>& faces, const std::vector<LinkHand>& hands, double now,
-                std::vector<std::string>& events);
+                std::vector<std::string>& events, const std::map<int, std::vector<PoseWrist>>& poses = {});
+    // hand wrist distance to the nearest visible pose wrist of face, in hand sizes (-1 if none)
+    float pose_distance(const LinkHand& h, int face_id) const;
     void reset();
 
     const std::map<int, int>& owner() const { return owner_; }  // hand id -> face id
     const std::map<int, PersonState>& people() const { return people_; }
 
 private:
+    std::map<int, std::vector<PoseWrist>> poses_;
     std::map<int, int> owner_;
     std::map<int, PersonState> people_;
     std::map<int, bool> facing_;

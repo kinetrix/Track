@@ -12,7 +12,8 @@ running through Apple's Core ML on the Neural Engine / GPU. No Python at run tim
 | Find hands | MediaPipe palm detector (Google, Apache-2.0) | GPU |
 | 21 points per hand | MediaPipe hand landmarks (Google, Apache-2.0) | GPU |
 | Gestures | hand-written rules on the 21 points | CPU (Swift) |
-| Whose hand, who is talking to the camera | rules on the face and hand boxes (no model) | CPU (Swift) |
+| Whose hand, who is talking to the camera | rules on the face and hand boxes | CPU (Swift) |
+| Body pose (only with 2+ people and hands in view: whose hand) | MediaPipe pose landmarker (OpenCV Zoo, Apache-2.0), 256x256 crop from each face, 2.6 MB | Neural Engine |
 | Help requests (Signal for Help, both hands up) | rules on the hand points (no model) | CPU (Swift) |
 | Waving to call the robot, where to turn | rules on hand motion and face position (no model) | CPU (Swift) |
 
@@ -35,14 +36,15 @@ holds a gesture is marked as addressing it. No extra model, a few comparisons pe
 | side | a right hand is usually on the person's right of their face (follows the Mirror setting) |
 | one each | each person has at most one left and one right hand |
 | sticky | a hand keeps its person unless another fits clearly better |
+| pose | with 2+ people and hands in view, each person's body pose is found from a crop around their face; a hand whose wrist is within 1 hand size of a person's pose wrist is theirs (overrides the other rules), and a person whose two visible wrists are both more than 2.5 hand sizes away can't own it. Fixes a farther person's hand being given to the nearer person (one camera has no depth, and size alone couldn't tell) |
 | facing | nose roughly between the eyes (YuNet's points) = turned to the camera |
 | addressing | facing + the same gesture held 0.5 s by that person's hand (restarts if the hand changes person); stays on 1 s after the gesture ends |
 
 The window draws each hand in its person's colour with a dashed line to their face and the
 label `#2 · Right: Thumbs up (1)` (`?` = no one). The person addressing the camera gets a yellow
 frame and a `talking: Thumbs up` banner. The console prints `hand #3 (Right) -> face #1 (reach 2.1,
-size 0.64)` when a hand changes person (the size numbers are for tuning the rule) and
-`face #1 addressing: Thumbs up` when someone starts addressing it. Rules and numbers:
+size 0.64, pose wrist 0.4 hand sizes away)` when a hand changes person (the numbers are for tuning the rules) and
+`face #1 addressing: Thumbs up` when someone starts addressing it. With poses on, each person's arms are drawn in their colour. Rules and numbers:
 `PersonLinker.swift` (`LinkPolicy`).
 
 ## Help requests
@@ -53,7 +55,7 @@ stays until **Acknowledge** is clicked; the same person can't raise another for 
 
 | Signal | How |
 |---|---|
-| Signal for Help | palm to the camera with the thumb tucked in (four fingers up), hold about half a second, then fold the fingers down over the thumb (a fist) within a second, hand held still (a waving, blurred hand can look like this) |
+| Signal for Help | palm to the camera with the thumb tucked in (four fingers up), hold about half a second, then fold the fingers down over the thumb (a fist) within a second, hand held still (a waving, blurred hand can look like this). Give it **twice within 6 s**, facing the camera: after the first an orange "give it once more" banner shows (once was too easy to trigger by relaxing an open hand or after a wave: 12 alerts in 7 minutes) |
 | Both hands up | both hands open and raised above the chin, held 2 s |
 
 No model: finger states from the hand points (`HelpDetector.swift`, `HelpPolicy`). The console
@@ -151,6 +153,7 @@ FaceHandTrack/                  the app (Swift)
   FastFaceTracker.swift           default face tracker (as ../jetson): motion + overlap, re-ID
   FaceEmbedder.swift              SFace fingerprints (5-point alignment)
   PersonLinker.swift              whose hand, who is facing / addressing the camera
+  PoseEstimator.swift             body pose from a crop around a face (for whose hand)
   HelpDetector.swift              help requests: Signal for Help, both hands up
   AttentionTracker.swift          waving to call the robot; who it attends to and where to turn
   EdgeTAM.swift, TrackManager.swift   EdgeTAM streaming tracker + face track policy (from v1)
@@ -161,12 +164,12 @@ FaceHandTrack/                  the app (Swift)
   SelfTest.swift                  command-line checks
   Models/                         Core ML models + edgetam_config.json
 FaceHandTrack.xcodeproj         Xcode project
-conversion/convert_models.py    how YuNet / palm / landmark models were converted to Core ML
+conversion/convert_models.py    how YuNet / SFace / palm / landmark / pose models were converted to Core ML
 tests/                          self-test scripts and the Python comparison
 ```
 
 The EdgeTAM Core ML models come from the iOS version
-(`../../FaceTrack_v1_iOS/conversion/export_edgetam.py`). To re-make the other four (SFace fp16
+(`../../FaceTrack_v1_iOS/conversion/export_edgetam.py`). To re-make the other five (pose fp16 is within 2 px of 256 of fp32; SFace fp16
 matches the ONNX model at cosine 0.99999):
 
 ```bash

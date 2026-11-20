@@ -4,8 +4,9 @@
 //
 //   Signal for Help   palm to the camera with the thumb tucked in (index..pinky up, thumb folded),
 //                     held a moment, then the fingers fold over the thumb (a fist) within about a
-//                     second, wrist held still. Done twice within 6 s: relaxing or lowering an open
-//                     hand can look like it once, rarely twice.
+//                     second, wrist held still, by someone facing the camera (or whose face isn't
+//                     seen). Done twice within 6 s: relaxing or lowering an open hand can look like
+//                     it once, rarely twice.
 //   Both hands up     both of one person's hands open and raised above their chin, held 2 s.
 //
 // An alert names the person and stays until acknowledged (the stream page's button); the same
@@ -55,6 +56,7 @@ struct HelpFace {
     int id;
     cv::Rect2f box;
     std::string name;
+    int facing = -1;               // 1 facing the camera, 0 looking away, -1 unknown
 };
 
 class HelpDetector {

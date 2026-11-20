@@ -32,6 +32,8 @@ final class AppModel: ObservableObject {
     @Published var faceMode = FaceMode.fast { didSet { if faceMode != oldValue { pipeline?.faceMode = faceMode } } }
     @Published var alerts: [HelpAlert] = []
     @Published var attention: AttentionTarget?
+    @Published var helpPending = false
+    @Published var poses: [Int: [CGPoint?]] = [:]
     private var lastAlertID = 0
     @Published var nameText = ""
     @Published var namesStatus = ""
@@ -85,6 +87,8 @@ final class AppModel: ObservableObject {
                         self.frameSize = out.size
                         self.alerts = out.alerts
                         self.attention = out.attention
+                        self.helpPending = out.helpPending
+                        self.poses = out.poses
                         if let newest = out.alerts.last, newest.id > self.lastAlertID {  // a new help request: sound
                             self.lastAlertID = newest.id
                             if NSSound(named: NSSound.Name("Sosumi"))?.play() != true { NSSound.beep() }
@@ -178,7 +182,7 @@ struct ContentView: View {
                     CameraPreview(camera: model.camera, mirrored: model.mirrored)
                 }
                 Overlay(faces: model.faces, hands: model.hands, frameSize: model.frameSize,
-                        showMasks: model.showMasks && model.faceMode == .edgetam)
+                        showMasks: model.showMasks && model.faceMode == .edgetam, poses: model.poses)
                 HUD(stats: model.stats, mode: model.faceMode).padding(8)
                 if let a = model.attention {
                     AttentionBadge(target: a, name: model.faces.first { $0.id == a.faceID }?.name)
@@ -187,6 +191,15 @@ struct ContentView: View {
                 }
                 if !model.alerts.isEmpty {
                     HelpBanner(alerts: model.alerts) { model.acknowledgeAlerts() }
+                        .frame(maxWidth: .infinity, alignment: .top)
+                        .padding(.top, 12)
+                } else if model.helpPending {
+                    Text("Help signal seen · give it once more to confirm")
+                        .font(.title3.bold())
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.orange.opacity(0.9), in: Capsule())
+                        .foregroundStyle(.black)
                         .frame(maxWidth: .infinity, alignment: .top)
                         .padding(.top, 12)
                 }
@@ -287,7 +300,7 @@ struct HUD: View {
         let counts = String(format: "%.1f FPS · %ld face%@ · %ld hand%@", stats.fps, stats.faces, stats.faces == 1 ? "" : "s",
                             stats.hands, stats.hands == 1 ? "" : "s")
         let faces = mode == .fast
-            ? String(format: "detect %.1f · fingerprints %.1f", stats.detectMs, stats.embedMs)
+            ? String(format: "detect %.1f · fingerprints %.1f · pose %.1f", stats.detectMs, stats.embedMs, stats.poseMs)
             : String(format: "detect %.1f · encode %.1f · per face %.1f", stats.detectMs, stats.encodeMs, stats.perFaceMs)
         let rest = String(format: " · palm %.1f · landmarks %.1f · total %.1f ms", stats.palmMs, stats.landmarksMs, stats.totalMs)
         return counts + "\n" + faces + rest + (stats.events.isEmpty ? "" : "\n" + stats.events.joined(separator: "\n"))
@@ -308,6 +321,7 @@ struct Overlay: View {
     let hands: [HandTrackOutput]
     let frameSize: CGSize
     let showMasks: Bool
+    var poses: [Int: [CGPoint?]] = [:]  // per face id: shoulders, elbows, wrists (left arm, right arm)
 
     static let bones = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
                         (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (0, 17), (17, 18), (18, 19), (19, 20)]
@@ -354,6 +368,20 @@ struct Overlay: View {
                                  with: .color(.yellow))
                         ctx.draw(banner, at: origin, anchor: .topLeading)
                     }
+                }
+                for (fid, pts) in poses where pts.count == 6 {  // each person's arms, in their colour
+                    let color = Self.color(fid)
+                    var arms = Path()
+                    for arm in [pts[0...2], pts[3...5]] {
+                        let seg = arm.map { $0.map(map) }
+                        for k in 0..<2 {
+                            if let a = seg[seg.startIndex + k], let b = seg[seg.startIndex + k + 1] {
+                                arms.move(to: a)
+                                arms.addLine(to: b)
+                            }
+                        }
+                    }
+                    ctx.stroke(arms, with: .color(color.opacity(0.8)), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 }
                 for hand in hands {
                     // a hand takes its person's colour; grey when it belongs to no one

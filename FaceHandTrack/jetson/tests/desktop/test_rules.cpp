@@ -104,15 +104,47 @@ int main() {
         check("hold restarts when the hand changes person", L.people().at(2).addressing.empty());
     }
 
+    // ---------- body pose (2+ people): the farther person's hand the size rule gets wrong ----------
+    {
+        // A near (face 160 px), B a step behind (face 80 px). B's hand (70 px) is raised next to A's
+        // face: closer to A, and its size fits A almost as well as B, so the rules alone give it to A.
+        std::vector<LinkFace> fs = {face(1, 700, 330, 160), face(2, 420, 260, 80)};
+        LinkHand h{1, "Right", hand_pts(590, 330, 70), ""};
+        PersonLinker R;
+        auto o = link(R, fs, {h});
+        check("rules alone: the farther person's hand goes to the nearer person (the bug)", o == std::map<int, int>{{1, 1}});
+        PersonLinker P;
+        std::vector<std::string> ev;
+        std::map<int, std::vector<PoseWrist>> poses = {
+            {1, {{{650, 560}, 0.9f}, {{760, 560}, 0.9f}}},   // A's hands are down by A's sides
+            {2, {{{590, 365}, 0.9f}, {{380, 420}, 0.6f}}}};  // B's right wrist is where the hand's wrist is
+        P.update(fs, {h}, 0, ev, poses);
+        check("with poses: the hand goes to the farther person whose wrist it is", P.owner() == std::map<int, int>{{1, 2}});
+        bool logged = false;
+        for (auto& e : ev) logged = logged || e.find("pose wrist") != std::string::npos;
+        check("the log says the pose decided it", logged);
+        PersonLinker Q;  // only one of A's wrists seen, elsewhere, and no pose for B: rules still decide, A pays a penalty
+        Q.update(fs, {h}, 0, ev, {{1, {{{650, 560}, 0.9f}, {{760, 560}, 0.1f}}}});
+        float ca, cb;
+        Q.cost(h, fs[0], ca);
+        Q.cost(h, fs[1], cb);
+        check("one wrist of A seen elsewhere: A's cost goes up", ca > 0 && Q.owner().size() == 1);
+        PersonLinker S;  // the near person's own hand still goes to them with poses on
+        S.update(fs, {{2, "Right", hand_pts(640, 520, 100), ""}}, 0, ev,
+                 {{1, {{{640, 570}, 0.9f}, {{760, 560}, 0.9f}}}, {2, {{{400, 380}, 0.9f}, {{380, 420}, 0.6f}}}});
+        check("with poses: the near person's own hand stays theirs", S.owner() == std::map<int, int>{{2, 1}});
+    }
+
     // ---------- help ----------
     const std::array<bool, 5> TUCK{false, true, true, true, true}, FIST{false, false, false, false, false},
         PALM{true, true, true, true, true};
+    int facing = 1;
     auto help_run = [&](const std::vector<std::pair<std::array<bool, 5>, float>>& seq, std::vector<std::string>* evs = nullptr) {
         HelpDetector H;
         std::vector<std::string> ev;
         for (size_t i = 0; i < seq.size(); ++i) {
             HelpHand h{1, 1, seq[i].first, "", {500, 500}, {seq[i].second, 560}, 100};
-            H.update({{1, cv::Rect2f(450, 200, 100, 120), "Vignesh"}}, {h}, i / 30.0, ev);
+            H.update({{1, cv::Rect2f(450, 200, 100, 120), "Vignesh", facing}}, {h}, i / 30.0, ev);
         }
         if (evs) *evs = ev;
         return H.alerts().size();
@@ -135,6 +167,11 @@ int main() {
         check("second signal 7 s later -> no alert", help_run(late) == 0);
     }
     check("waving, blur flips tucked / fist -> no alert", help_run(blur) == 0);
+    facing = 0;
+    check("signal twice while looking away (e.g. at another person) -> no alert", help_run(twice) == 0);
+    facing = -1;
+    check("signal twice, face not seen -> alert", help_run(twice) == 1);
+    facing = 1;
     {
         HelpDetector H;
         std::vector<std::string> e2;

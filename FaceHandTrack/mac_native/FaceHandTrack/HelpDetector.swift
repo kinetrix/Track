@@ -6,8 +6,11 @@ import Foundation
 ///   Signal for Help   palm to the camera with the thumb tucked in (index..pinky up, thumb folded),
 ///                     held a moment, then the fingers fold down over the thumb (a fist), within
 ///                     about a second: the one-handed signal promoted by the Canadian Women's
-///                     Foundation, done once. The hand must stay roughly still throughout: a
-///                     waving, blurred hand can look like a tucked thumb and then a fist.
+///                     Foundation. The hand must stay roughly still throughout (a waving, blurred hand
+///                     can look like a tucked thumb and then a fist), the person must be facing the
+///                     camera (or their face not seen), and it must be given twice within 6 s:
+///                     relaxing or lowering an open hand looked like it once (12 alerts in 7 minutes
+///                     in the 2-person test), rarely twice. Same rules as ../jetson/src/help_detector.cpp.
 ///   Both hands up     both of one person's hands open and raised above their chin, held 2 s.
 ///
 /// A request raises an alert naming the person (face id and saved name) that stays until it is
@@ -19,6 +22,8 @@ struct HelpPolicy {
     var stillFraction: CGFloat = 0.5  // the hand may drift at most this x its size during the signal
     var handsUpHold: TimeInterval = 2.0  // both hands open and raised this long
     var cooldown: TimeInterval = 10  // seconds before the same person can raise another alert
+    var repeats = 2  // Signals for Help needed ...
+    var repeatWithin: TimeInterval = 6  // ... within this many seconds
 }
 
 struct HelpAlert: Identifiable {
@@ -49,6 +54,7 @@ struct HelpFace {
     let id: Int
     let box: CGRect  // frame pixels
     let name: String?
+    var facing: Bool? = nil  // turned to the camera (nil: not known)
 }
 
 final class HelpDetector {
@@ -60,11 +66,16 @@ final class HelpDetector {
     private var tucked: [Int: (since: TimeInterval, last: TimeInterval, start: CGPoint, at: CGPoint)] = [:]  // per hand id
     private var handsUp: [Int: TimeInterval] = [:]  // per face id: since
     private var lastAlert: [String: TimeInterval] = [:]  // per person key: time
+    private var signals: [String: [TimeInterval]] = [:]  // per person key: times of unconfirmed signals
+    private(set) var newEvents: [String] = []
+    /// Someone gave one Signal for Help and the confirming second is awaited.
+    var pending: Bool { !signals.isEmpty }
 
     func reset() {
         tucked.removeAll()
         handsUp.removeAll()
         lastAlert.removeAll()
+        signals.removeAll()
     }
 
     func acknowledgeAll() { alerts.removeAll() }
@@ -79,9 +90,25 @@ final class HelpDetector {
         newAlerts.append(a)
     }
 
+    private func signal(face: HelpFace?, faceID: Int?, handID: Int, now: TimeInterval) {
+        let key = faceID.map { "f\($0)" } ?? "h\(handID)"
+        var times = (signals[key] ?? []).filter { now - $0 <= policy.repeatWithin }
+        times.append(now)
+        if times.count >= policy.repeats {
+            signals[key] = nil
+            raise("Signal for Help", face: face, faceID: faceID, handID: handID, now: now)
+        } else {
+            signals[key] = times
+            let who = faceID.map { id in face?.name.map { "\($0) (#\(id))" } ?? "face #\(id)" } ?? "someone (face not seen)"
+            newEvents.append("help signal \(times.count) of \(policy.repeats) from \(who) (repeat within \(Int(policy.repeatWithin)) s to confirm)")
+        }
+    }
+
     func update(faces: [HelpFace], hands: [HelpHand], now: TimeInterval) {
         newAlerts.removeAll()
+        newEvents.removeAll()
         let pol = policy
+        signals = signals.mapValues { $0.filter { now - $0 <= pol.repeatWithin } }.filter { !$0.value.isEmpty }
         let faceByID = Dictionary(uniqueKeysWithValues: faces.map { ($0.id, $0) })
         let live = Set(hands.map(\.id))
         tucked = tucked.filter { live.contains($0.key) }
@@ -100,8 +127,10 @@ final class HelpDetector {
                 }
             } else if let t = tucked[h.id] {
                 if isClosed && t.last - t.since >= pol.tuckedHold && now - t.last <= pol.foldWithin && still(t.at) {
-                    raise("Signal for Help", face: h.owner.flatMap { faceByID[$0] }, faceID: h.owner, handID: h.id, now: now)
                     tucked[h.id] = nil
+                    let face = h.owner.flatMap { faceByID[$0] }
+                    if face?.facing == false { continue }  // a signal is made toward the robot
+                    signal(face: face, faceID: h.owner, handID: h.id, now: now)
                 } else if now - t.last > pol.foldWithin {
                     tucked[h.id] = nil
                 }

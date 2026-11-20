@@ -11,6 +11,9 @@ import Foundation
 ///   side   a right hand is usually on the person's right of their face
 ///   one    each person has at most one left and one right hand
 ///   sticky a hand keeps its person unless another fits clearly better (no flicker)
+///   pose   when body poses are known (2+ people in view), a hand whose wrist sits on a person's
+///          pose wrist belongs to that person, and a person whose visible wrists are both elsewhere
+///          cannot own it (same rule as ../jetson/src/person_linker.cpp)
 struct LinkPolicy {
     var maxReach: CGFloat = 5.0  // hand centre to face centre, in face widths (raised hands reach ~4.5; doubtful links were 5.3+)
     var handFaceRatio: CGFloat = 0.6  // typical hand size (wrist..middle knuckle) / face box width
@@ -22,6 +25,11 @@ struct LinkPolicy {
     var maxYaw: CGFloat = 0.35  // nose offset from the eye midpoint / eye distance: below = facing the camera
     var holdSeconds: TimeInterval = 0.5  // a gesture held this long while facing = addressing
     var lingerSeconds: TimeInterval = 1.0  // keep "addressing" this long after the gesture ends
+    var poseVisible: Float = 0.5  // pose wrist visibility needed to count
+    var poseMatch: CGFloat = 1.0  // hand wrist within this many hand sizes of a pose wrist: that person's
+    var poseElsewhere: CGFloat = 2.5  // ... farther than this from every visible pose wrist: not that person's
+    var poseBonus: CGFloat = 10  // cost lowered by this for a pose match (decides over the other rules)
+    var posePenalty: CGFloat = 2  // one visible wrist elsewhere (the other unseen)
 }
 
 struct LinkFace {
@@ -55,6 +63,16 @@ final class PersonLinker {
     private var held: [Int: (gesture: String, since: TimeInterval)] = [:]  // per hand id
     private var addressing: [Int: (gesture: String, until: TimeInterval)] = [:]  // per face id
     private(set) var newEvents: [String] = []
+    private var poses: [Int: [(point: CGPoint, visibility: Float)]] = [:]  // per face id, this frame only
+
+    /// Hand wrist distance to the nearest visible pose wrist of a face, in hand sizes (nil if none).
+    func poseDistance(_ hand: LinkHand, _ faceID: Int) -> CGFloat? {
+        guard let ws = poses[faceID], hand.points.count == 21 else { return nil }
+        let w0 = hand.points[0]
+        let ds = ws.filter { $0.visibility >= policy.poseVisible }.map { hypot(w0.x - $0.point.x, w0.y - $0.point.y) }
+        guard let d = ds.min() else { return nil }
+        return d / max(Self.handSize(hand.points), 1)
+    }
 
     func reset() {
         owner.removeAll()
@@ -112,11 +130,25 @@ final class PersonLinker {
         if hand.handedness == "Left" && (rightIsLeftInImage ? onImageLeft : onImageRight) { c += pol.wrongSidePenalty }
         if dy < -1.5 { c += pol.aboveHeadPenalty }  // more than 1.5 face widths above the face centre
         if owner[hand.id] == face.id { c -= pol.stickyBonus }
+        // body pose: the strongest evidence when it is there
+        if let pd = poseDistance(hand, face.id) {
+            let seen = (poses[face.id] ?? []).filter { $0.visibility >= pol.poseVisible }.count
+            if pd <= pol.poseMatch {
+                c -= pol.poseBonus
+            } else if pd > pol.poseElsewhere && seen == 2 {
+                return nil  // both wrists seen, both elsewhere
+            } else if pd > pol.poseElsewhere {
+                c += pol.posePenalty
+            }
+        }
         return c
     }
 
-    func update(faces: [LinkFace], hands: [LinkHand], now: TimeInterval) {
+    /// `bodyPoses`: per face id, its body's wrists (only when computed this frame).
+    func update(faces: [LinkFace], hands: [LinkHand], now: TimeInterval,
+                bodyPoses: [Int: [(point: CGPoint, visibility: Float)]] = [:]) {
         newEvents.removeAll()
+        poses = bodyPoses
         let pol = policy
         let visible = faces.filter(\.visible)
 
@@ -145,8 +177,10 @@ final class PersonLinker {
         }
         for h in hands where newOwner[h.id] != owner[h.id] {
             guard let fid = newOwner[h.id], let f = visible.first(where: { $0.id == fid }) else { continue }
-            let m = measure(h, f)  // printed so the size rule can be tuned on real people
-            newEvents.append(String(format: "hand #%d (%@) -> face #%d (reach %.1f, size %.2f)", h.id, h.handedness, fid, m.reach, m.ratio))
+            let m = measure(h, f)  // printed so the rules can be tuned on real people
+            var line = String(format: "hand #%d (%@) -> face #%d (reach %.1f, size %.2f", h.id, h.handedness, fid, m.reach, m.ratio)
+            if let pd = poseDistance(h, fid) { line += String(format: ", pose wrist %.1f hand sizes away", pd) }
+            newEvents.append(line + ")")
         }
         let prevOwner = owner
         owner = newOwner
