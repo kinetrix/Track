@@ -45,9 +45,11 @@ struct LinkPolicy {
     float pose_bonus = 10.0f;       // cost lowered by this for a pose match (decides over the other rules)
     float pose_nose_reach = 1.0f;   // pose nose farther than this many face heights from its face: someone else's pose
     float pose_clearly_closer = 0.6f;  // two poses claim a hand: one counts only if this much closer
-    float depth_front = 0.9f;       // a hand at most this many metres nearer the camera than its face ...
+    float depth_front = 0.6f;       // a hand at most this many metres nearer the camera than its face (robot
+                                    // run 20 Nov: own hands 0-0.3 m nearer; at 0.9 the nearer person's hands,
+                                    // 0.75 m in front of the friend, went to him while their face was unseen) ...
     float depth_behind = 0.35f;     // ... and at most this many metres farther
-    float depth_weight = 2.0f;      // within that, cost per metre of depth difference
+    float depth_weight = 4.0f;      // within that, cost per metre of depth difference (decides over reach and size)
 };
 
 struct PoseWrist {

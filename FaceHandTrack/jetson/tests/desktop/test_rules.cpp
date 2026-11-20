@@ -193,6 +193,14 @@ int main() {
         nowhere.depth = 3.5f;
         PersonLinker W;
         check("depth: a hand at no face's distance is no one's", link(W, fs, {nowhere}).empty());
+        // robot run 20 Nov, 17-25 s: the nearer person's face unseen, their hands 0.96 m away, the
+        // friend's face 1.7 m away: 0.75 m in front of the friend is not the friend's hand
+        std::vector<LinkFace> far_only = {face(2, 420, 260, 80)};
+        far_only[0].depth = 1.7f;
+        LinkHand front{5, "Right", hand_pts(500, 420, 70), ""};
+        front.depth = 0.96f;
+        PersonLinker F;
+        check("depth: a hand 0.75 m in front of the only face seen is not theirs", link(F, far_only, {front}).empty());
     }
 
     // ---------- help ----------
