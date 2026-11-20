@@ -54,6 +54,7 @@ Gesture classify(const Points21& lm, const Points21& w) {
     const bool I = ext[0], M = ext[1], R = ext[2], P = ext[3];
     Gesture g;
     g.fingers = T + I + M + R + P;
+    g.extended = {T, I, M, R, P};
 
     const double palm_img = dist(lm[9], lm[0]) + 1e-9;
     const double index_ratio = dist(w[8], w[0]) / (dist(w[6], w[0]) + 1e-9);

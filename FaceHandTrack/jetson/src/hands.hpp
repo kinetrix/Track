@@ -57,7 +57,9 @@ float iou4(const float* a, const float* b);         // boxes as x1, y1, x2, y2
 struct HandPolicy {
     int max_hands = 2;
     int palm_interval = 5;           // palm detector every N frames while hands are tracked (every frame when none)
-    float min_presence = 0.6f;       // landmark model's hand-presence score to keep a hand
+    float min_presence = 0.45f;      // landmark model's hand-presence score to keep a tracked hand (0.6 in
+                                     // the Python engine: moving hands dipped just under it and were
+                                     // lost and re-found constantly in the 2-person test)
     float min_presence_new = 0.8f;   // ... to start a new hand
     float overlap_iou = 0.3f;        // a detected palm overlapping a tracked hand's palm this much is that hand
     float duplicate_iou = 0.5f;      // two tracked hands overlapping this much -> drop the younger

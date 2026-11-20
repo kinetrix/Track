@@ -20,6 +20,7 @@ void HandPipeline::process(const cv::Mat& bgr, std::vector<std::string>& events)
         const Gesture g = classify(t.r.landmarks, t.r.world);
         h.raw_gesture = g.label;
         h.fingers = g.fingers;
+        h.extended = g.extended;
         h.gesture = smoothers_[t.id](g.label);
         live.insert(t.id);
         hands_.push_back(h);

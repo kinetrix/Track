@@ -1,10 +1,31 @@
 #include "camera.hpp"
 
+#include <fcntl.h>
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
 namespace fht {
+
+// The RealSense colour camera's auto exposure may lengthen each frame in dim light, which drops
+// the frame rate (15-30 fps on the robot) and blurs moving hands. Turning off "exposure priority"
+// keeps the frame rate fixed; auto exposure then brightens by gain instead.
+static void keep_frame_rate(const std::string& device) {
+    const int fd = ::open(device.c_str(), O_RDWR | O_NONBLOCK);
+    if (fd < 0) return;
+    v4l2_control c{};
+    c.id = V4L2_CID_EXPOSURE_AUTO_PRIORITY;
+    c.value = 0;
+    if (::ioctl(fd, VIDIOC_S_CTRL, &c) == 0)
+        std::printf("[camera] exposure priority off: frame rate stays fixed in dim light\n");
+    else
+        std::printf("[camera] could not turn exposure priority off (frame rate may drop in dim light)\n");
+    ::close(fd);
+}
 
 // Unitree's videohub_pc4 owns the head camera (1920x1080 @ 15 fps) and multicasts it as
 // 1280x720 H.264 over RTP on eth0. Receiving that stream keeps Unitree's own video working;
@@ -28,6 +49,7 @@ Camera::Camera(const std::string& device, int width, int height, int fps) {
             cap_.set(cv::CAP_PROP_FRAME_HEIGHT, height);
             cap_.set(cv::CAP_PROP_FPS, fps);
             cap_.set(cv::CAP_PROP_BUFFERSIZE, 1);
+            keep_frame_rate(device);
         }
     } else {
         // "videohub" (Unitree's head-camera stream) or any GStreamer pipeline ending in appsink.

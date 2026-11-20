@@ -33,7 +33,19 @@ void FacePipeline::process(const cv::Mat& bgr, double now, std::vector<std::stri
 
 std::vector<FaceOut> FacePipeline::faces() const {
     std::vector<FaceOut> out;
-    for (const auto& t : tracker_.tracks()) out.push_back({t->id, t->box, t->visible, t->iou_pred});
+    for (const auto& t : tracker_.tracks()) {
+        FaceOut o;
+        o.id = t->id;
+        o.box = t->box;
+        o.visible = t->visible;
+        o.quality = t->iou_pred;
+        // face points (for "facing the robot") from this frame's detection of this track, if any
+        const FaceDet* best = nullptr;
+        for (const FaceDet& d : dets_)
+            if (t->visible && iou(d.box, t->box) > 0.3f && (!best || iou(d.box, t->box) > iou(best->box, t->box))) best = &d;
+        if (best) o.landmarks.assign(best->landmarks.begin(), best->landmarks.end());
+        out.push_back(o);
+    }
     return out;
 }
 

@@ -21,6 +21,7 @@ struct HandResult {
     std::string gesture;         // after smoothing ("" = none)
     std::string raw_gesture;     // this frame's label
     int fingers = 0;
+    std::array<bool, 5> extended{};  // thumb, index, middle, ring, pinky (help signal, waves)
 };
 
 class HandPipeline {

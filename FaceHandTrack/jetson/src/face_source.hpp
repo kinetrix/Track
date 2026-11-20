@@ -15,6 +15,8 @@ struct FaceOut {
     cv::Rect2f box;        // frame pixels
     bool visible = true;   // false while a track is briefly missing
     float quality = 0;     // detector score (fast tracker) or EdgeTAM's IoU estimate
+    std::string name;      // saved name this face matches ("" none; fast tracker only)
+    std::vector<cv::Point2f> landmarks;  // 5 YuNet points this frame (empty if not seen this frame)
 };
 
 class FaceSource {

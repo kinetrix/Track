@@ -2,6 +2,7 @@
 // Port of onnx/facetrack/gestures.py: same thresholds, same rule order.
 #pragma once
 
+#include <array>
 #include <deque>
 #include <string>
 
@@ -12,6 +13,7 @@ namespace fht {
 struct Gesture {
     std::string label;  // "" = none
     int fingers = 0;    // extended fingers
+    std::array<bool, 5> extended{};  // thumb, index, middle, ring, pinky
 };
 
 // landmarks: image pixels (+ relative z); world: metric 3-D.
