@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
             lfaces.push_back({f.id, f.box, f.landmarks, f.visible, f.visible ? face_depth(depth, f.box) : -1.f});
         std::vector<LinkHand> lhands;
         for (const HandResult& h : houts) {
-            LinkHand lh{h.id, h.handedness, {}, h.gesture};
+            LinkHand lh{h.id, h.handedness, {}, h.gesture, -1.f, {}};
             for (const auto& q : h.landmarks) lh.points.emplace_back(q.x, q.y);
             lh.depth = hand_depth(depth, lh.points);
             if (lh.depth > 0 && lh.points.size() == 21)
